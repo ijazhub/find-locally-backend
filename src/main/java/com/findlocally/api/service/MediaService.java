@@ -1,0 +1,82 @@
+package com.findlocally.api.service;
+
+import com.findlocally.api.repository.MediaRepository;
+import com.findlocally.api.model.*;
+import com.findlocally.api.storage.ObjectStorage;
+import com.findlocally.api.utility.*;
+import java.util.*;
+import java.io.IOException;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.server.ResponseStatusException;
+
+@Service
+public class MediaService {
+    private final MediaRepository repository;
+    private final ObjectStorage storage;
+    private final CurrentUser current;
+    public MediaService(MediaRepository repository, ObjectStorage storage, CurrentUser current) {
+        this.repository = repository; this.storage = storage; this.current = current;
+    }
+    @Transactional
+    public UploadResponse createUpload(UploadPurpose uploadPurpose, MultipartFile file) {
+        UUID user = current.id();
+        if (uploadPurpose == null || file == null || file.isEmpty() || file.getContentType() == null)
+            throw Inputs.bad("A purpose and a non-empty file with a content type are required");
+        String purpose = uploadPurpose.getValue(), type = file.getContentType().toLowerCase(Locale.ROOT);
+        long size = file.getSize();
+        boolean video = purpose.equals("GALLERY_VIDEO"), document = purpose.equals("ID_DOCUMENT");
+        boolean allowed = video ? Set.of("video/mp4", "video/webm").contains(type)
+                : Set.of("image/jpeg", "image/png", "image/webp").contains(type) || (document && type.equals("application/pdf"));
+        if (!allowed) throw Inputs.bad("Unsupported file content type for this purpose");
+        if (size > (video ? 100L : 10L) * 1024 * 1024)
+            throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE, "Images and documents allow 10 MiB; videos allow 100 MiB");
+        UUID id = UUID.randomUUID();
+        String key = (document ? "private/" : "public/") + user + "/" + id;
+        repository.create(id, user, purpose, key, type, size);
+        boolean uploaded = false;
+        boolean cleanupRegistered = false;
+        try (var content = file.getInputStream()) {
+            storage.upload(key, type, size, content);
+            uploaded = true;
+            if (TransactionSynchronizationManager.isSynchronizationActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override public void afterCompletion(int status) {
+                        if (status == STATUS_ROLLED_BACK) cleanup(key);
+                    }
+                });
+                cleanupRegistered = true;
+            }
+            repository.complete(id);
+        } catch (IOException exception) {
+            if (uploaded && !cleanupRegistered) cleanup(key);
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Could not read the uploaded file. Please retry.");
+        } catch (RuntimeException exception) {
+            if (uploaded && !cleanupRegistered) cleanup(key);
+            throw exception;
+        }
+        return new UploadResponse().uploadId(id).status(UploadResponse.StatusEnum.UPLOADED).contentType(type).sizeBytes(size);
+    }
+    private void cleanup(String key) {
+        try { storage.delete(key); }
+        catch (RuntimeException exception) {
+            LoggerFactory.getLogger(MediaService.class).warn("S3 cleanup failed after an upload transaction rolled back; storage lifecycle cleanup may be needed");
+        }
+    }
+    @Transactional
+    public MediaRepository.Upload confirm(UUID user, UUID id, Set<String> purposes) {
+        var upload = repository.lock(user, id);
+        if (upload == null || !purposes.contains(upload.purpose())) throw Inputs.bad("Choose an owned upload with the correct purpose");
+        if (!"UPLOADED".equals(upload.status())) {
+            storage.verify(upload.key(), upload.contentType(), upload.size());
+            repository.complete(id);
+        }
+        return upload;
+    }
+}
+

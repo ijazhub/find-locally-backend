@@ -1,0 +1,1817 @@
+openapi: 3.0.3
+info:
+  title: Niva API
+  version: 1.0.0
+  description: |
+    Backend for Niva, a local-business discovery and booking platform (customers and independent providers).
+    Built for Spring Boot 3 (springdoc-openapi / Spring Web). Errors use RFC 7807 problem details (Spring's `ProblemDetail`).
+    Money is always integer minor units (paise). Timestamps are ISO-8601 UTC; dates are `YYYY-MM-DD`.
+    Roles: `CUSTOMER`, `BUSINESS`. One account may hold both roles.
+    Authentication: all operations require `Authorization: Bearer <accessToken>` unless they explicitly declare `security: []`.
+    Registration, login, refresh, forgot-password, and reset-password are exempt; refresh validates its refresh token and password reset validates a single-use email token.
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local
+tags:
+  - name: Auth
+  - name: Account
+  - name: Catalog
+  - name: Provider Profile
+  - name: Saved & Following
+  - name: Bookings
+  - name: Cart
+  - name: Reviews
+  - name: Messages
+  - name: Assistant
+  - name: Notifications
+  - name: Media
+  - name: Business Onboarding
+  - name: Business Dashboard
+  - name: Business Services
+  - name: Business Bookings
+# Global requirement inherited by every operation unless overridden with security: [].
+# bearerAuth: [] means bearer authentication is required with no OAuth scopes.
+security:
+  - bearerAuth: []
+
+paths:
+  # ------------------------------------------------------------------ Auth
+  /auth/register:
+    post:
+      tags: [Auth]
+      operationId: register
+      summary: register with email and password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterRequest' }
+      responses:
+        '201':
+          description: Authenticated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { description: Email already registered }
+  /auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      summary: login with email and password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Authenticated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { description: Email already registered }
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      operationId: refreshToken
+      summary: Exchange a refresh token for a new token pair
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string }
+      responses:
+        '200':
+          description: New tokens
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenPair' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /auth/forgot-password:
+    post:
+      tags: [Auth]
+      operationId: forgotPassword
+      summary: Request a password reset link by email
+      description: Returns the same response for unknown accounts and throttled requests. Links expire after 15 minutes. Never returns the reset token in the API response.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ForgotPasswordRequest' }
+      responses:
+        '202': { description: 'If an eligible account exists, a password reset email will be sent.' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '503': { description: Password reset email is not configured }
+  /auth/reset-password:
+    post:
+      tags: [Auth]
+      operationId: resetPassword
+      summary: Set a new password using the token from the reset email
+      description: Tokens are single-use. Success revokes all access and refresh sessions and clears the login lockout. Sign in again with the new password.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResetPasswordRequest' }
+      responses:
+        '204': { description: Password updated; sign in again }
+        '400': { description: 'Invalid or expired reset token, or invalid password' }
+  /auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logout
+      summary: Revoke the current refresh token
+      responses:
+        '204': { description: Logged out }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # ------------------------------------------------------------------ Account
+  /users/me:
+    get:
+      tags: [Account]
+      operationId: getMe
+      summary: Current user (profile, roles, whether a business profile exists)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserProfile' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    patch:
+      tags: [Account]
+      operationId: updateMe
+      summary: Update personal details
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserUpdate' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserProfile' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /users/me/addresses:
+    get:
+      tags: [Account]
+      operationId: listAddresses
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Address' }
+    post:
+      tags: [Account]
+      operationId: createAddress
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddressInput' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Address' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /users/me/addresses/{addressId}:
+    parameters:
+      - { name: addressId, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      tags: [Account]
+      operationId: updateAddress
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddressInput' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Address' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Account]
+      operationId: deleteAddress
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ------------------------------------------------------------------ Catalog
+  /categories:
+    get:
+      tags: [Catalog]
+      operationId: listCategories
+      summary: Service categories for the home page tiles and filter chips
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Category' }
+  /home:
+    get:
+      tags: [Catalog]
+      operationId: getHome
+      summary: Home page payload (categories plus featured local providers)
+      parameters:
+        - { $ref: '#/components/parameters/City' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HomeResponse' }
+  /providers:
+    get:
+      tags: [Catalog]
+      operationId: searchProviders
+      summary: Browse and search providers
+      parameters:
+        - { name: category, in: query, schema: { type: string }, description: Category slug, example: makeup }
+        - { name: q, in: query, schema: { type: string }, description: Name or neighbourhood }
+        - { name: city, in: query, schema: { type: string }, example: Pune }
+        - { name: lat, in: query, schema: { type: number, format: double } }
+        - { name: lng, in: query, schema: { type: number, format: double } }
+        - { name: maxDistanceKm, in: query, schema: { type: number } }
+        - { name: minRating, in: query, schema: { type: number, minimum: 0, maximum: 5 } }
+        - { name: maxPrice, in: query, schema: { type: integer, format: int64 }, description: Minor units }
+        - { name: verifiedOnly, in: query, schema: { type: boolean } }
+        - { name: sort, in: query, schema: { type: string, enum: [RECOMMENDED, NEAREST, RATING, PRICE_LOW, PRICE_HIGH], default: RECOMMENDED } }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Size' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProviderPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /providers/{providerId}:
+    parameters:
+      - { $ref: '#/components/parameters/ProviderId' }
+    get:
+      tags: [Catalog]
+      operationId: getProvider
+      summary: Business details page (header, badges, services, rates)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProviderDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /providers/{providerId}/services:
+    parameters:
+      - { $ref: '#/components/parameters/ProviderId' }
+    get:
+      tags: [Catalog]
+      operationId: listProviderServices
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Service' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /providers/{providerId}/availability:
+    parameters:
+      - { $ref: '#/components/parameters/ProviderId' }
+    get:
+      tags: [Catalog]
+      operationId: getProviderSlots
+      summary: Bookable time slots for a service on a date (booking step 1)
+      parameters:
+        - { name: serviceId, in: query, required: true, schema: { type: string, format: uuid } }
+        - { name: date, in: query, required: true, schema: { type: string, format: date } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Slot' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /providers/{providerId}/availability/calendar:
+    parameters:
+      - { $ref: '#/components/parameters/ProviderId' }
+    get:
+      tags: [Catalog]
+      operationId: getProviderCalendar
+      summary: Which days in a month have open slots (greys out unavailable days)
+      parameters:
+        - { name: serviceId, in: query, required: true, schema: { type: string, format: uuid } }
+        - { name: month, in: query, required: true, schema: { type: string, example: 2026-10 } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  availableDates:
+                    type: array
+                    items: { type: string, format: date }
+
+  # ------------------------------------------------------------------ Provider Profile
+  /providers/{providerId}/profile:
+    parameters:
+      - { $ref: '#/components/parameters/ProviderId' }
+    get:
+      tags: [Provider Profile]
+      operationId: getProviderSocialProfile
+      summary: Social profile (bio, stats, note, studio notes)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProviderSocialProfile' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /providers/{providerId}/media:
+    parameters:
+      - { $ref: '#/components/parameters/ProviderId' }
+    get:
+      tags: [Provider Profile]
+      operationId: listProviderMedia
+      summary: 'My work gallery of photos and short films'
+      parameters:
+        - { name: type, in: query, schema: { type: string, enum: [PHOTO, VIDEO] } }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Size' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MediaPage' }
+  /providers/{providerId}/reviews:
+    parameters:
+      - { $ref: '#/components/parameters/ProviderId' }
+    get:
+      tags: [Reviews]
+      operationId: listProviderReviews
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Size' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReviewPage' }
+  /providers/{providerId}/follow:
+    parameters:
+      - { $ref: '#/components/parameters/ProviderId' }
+    put:
+      tags: [Saved & Following]
+      operationId: followProvider
+      responses:
+        '204': { description: Following }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Saved & Following]
+      operationId: unfollowProvider
+      responses:
+        '204': { description: Unfollowed }
+
+  # ------------------------------------------------------------------ Saved & Following
+  /users/me/saved:
+    get:
+      tags: [Saved & Following]
+      operationId: listSaved
+      summary: Saved providers (Saved page)
+      parameters:
+        - { name: category, in: query, schema: { type: string } }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Size' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProviderPage' }
+  /users/me/saved/{providerId}:
+    parameters:
+      - { $ref: '#/components/parameters/ProviderId' }
+    put:
+      tags: [Saved & Following]
+      operationId: saveProvider
+      summary: Bookmark a provider
+      responses:
+        '204': { description: Saved }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Saved & Following]
+      operationId: unsaveProvider
+      responses:
+        '204': { description: Removed }
+  /users/me/following:
+    get:
+      tags: [Saved & Following]
+      operationId: listFollowing
+      summary: Providers the user follows (Profile page)
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Size' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProviderPage' }
+
+  # ------------------------------------------------------------------ Bookings
+  /bookings:
+    post:
+      tags: [Bookings]
+      operationId: createBooking
+      summary: Request a booking (booking step 3, Confirm booking)
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BookingCreate' }
+      responses:
+        '201':
+          description: Created in AWAITING_CONFIRMATION
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Booking' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    get:
+      tags: [Bookings]
+      operationId: listMyBookings
+      summary: My bookings, filtered by tab
+      parameters:
+        - name: tab
+          in: query
+          schema: { type: string, enum: [UPCOMING, DONE, CANCELLED], default: UPCOMING }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Size' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BookingPage' }
+  /bookings/summary:
+    get:
+      tags: [Bookings]
+      operationId: getBookingSummary
+      summary: Banner data ("Two lovely plans ahead") and tab counts
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BookingSummary' }
+  /bookings/{bookingId}:
+    parameters:
+      - { $ref: '#/components/parameters/BookingId' }
+    get:
+      tags: [Bookings]
+      operationId: getBooking
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Booking' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /bookings/{bookingId}/cancel:
+    parameters:
+      - { $ref: '#/components/parameters/BookingId' }
+    post:
+      tags: [Bookings]
+      operationId: cancelBooking
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, maxLength: 500 }
+      responses:
+        '200':
+          description: Cancelled
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Booking' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /bookings/{bookingId}/review:
+    parameters:
+      - { $ref: '#/components/parameters/BookingId' }
+    post:
+      tags: [Reviews]
+      operationId: createReview
+      summary: Leave "kind words" for a completed booking
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReviewInput' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Review' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ------------------------------------------------------------------ Cart
+  /cart:
+    get:
+      tags: [Cart]
+      operationId: getCart
+      summary: 'In cart tab'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Cart' }
+    delete:
+      tags: [Cart]
+      operationId: clearCart
+      responses:
+        '204': { description: Cleared }
+  /cart/items:
+    post:
+      tags: [Cart]
+      operationId: addCartItem
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CartItemInput' }
+      responses:
+        '201':
+          description: Added
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Cart' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /cart/items/{itemId}:
+    parameters:
+      - { name: itemId, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      tags: [Cart]
+      operationId: updateCartItem
+      summary: Replace a cart item's service, time and fulfilment before checkout
+      description: Omitted optional startsAt and fulfilment values are cleared. Only the item's owner can update it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CartItemInput' }
+      responses:
+        '200':
+          description: Updated cart
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Cart' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Cart]
+      operationId: removeCartItem
+      responses:
+        '204': { description: Removed }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /cart/checkout:
+    post:
+      tags: [Cart]
+      operationId: checkoutCart
+      summary: Turn every cart item into a booking request
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '201':
+          description: Bookings created
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Booking' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ------------------------------------------------------------------ Messages
+  /conversations:
+    get:
+      tags: [Messages]
+      operationId: listConversations
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Size' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConversationPage' }
+    post:
+      tags: [Messages]
+      operationId: startConversation
+      summary: Start (or return the existing) conversation with a provider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [providerId]
+              properties:
+                providerId: { type: string, format: uuid }
+                bookingId: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Existing conversation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Conversation' }
+        '201':
+          description: New conversation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Conversation' }
+  /conversations/{conversationId}/messages:
+    parameters:
+      - { name: conversationId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Messages]
+      operationId: listMessages
+      description: Newest first. Fetch this REST endpoint periodically to receive new messages.
+      parameters:
+        - { name: before, in: query, schema: { type: string, format: date-time } }
+        - { $ref: '#/components/parameters/Size' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Message' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Messages]
+      operationId: sendMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string, maxLength: 2000 }
+      responses:
+        '201':
+          description: Sent
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Message' }
+  /conversations/{conversationId}/read:
+    parameters:
+      - { name: conversationId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Messages]
+      operationId: markConversationRead
+      responses:
+        '204': { description: Marked read }
+
+  # ------------------------------------------------------------------ Assistant
+  /assistant/messages:
+    post:
+      tags: [Assistant]
+      operationId: askAssistant
+      summary: '"Ask Niva": free-text request, returns up to three provider recommendations'
+      description: |
+        Example: "makeup artist tomorrow 6pm, under 2000".
+        The server parses intent (category, date and time, budget), finds matching providers with open slots, and ranks them.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                threadId: { type: string, format: uuid, description: 'Omit to start a new thread' }
+                text: { type: string, maxLength: 1000 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssistantReply' }
+  /assistant/threads/{threadId}/book:
+    parameters:
+      - { name: threadId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Assistant]
+      operationId: assistantBook
+      summary: Book one of the recommended options ("Book this one")
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [recommendationId]
+              properties:
+                recommendationId: { type: string, format: uuid }
+      responses:
+        '201':
+          description: Booking requested
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Booking' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ------------------------------------------------------------------ Notifications
+  /notifications:
+    get:
+      tags: [Notifications]
+      operationId: listNotifications
+      parameters:
+        - { name: unreadOnly, in: query, schema: { type: boolean, default: false } }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Size' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationPage' }
+  /notifications/{notificationId}/read:
+    parameters:
+      - { name: notificationId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Notifications]
+      operationId: markNotificationRead
+      responses:
+        '204': { description: Marked read }
+  /notifications/read-all:
+    post:
+      tags: [Notifications]
+      operationId: markAllNotificationsRead
+      responses:
+        '204': { description: Marked read }
+
+  # ------------------------------------------------------------------ Media
+  /media/uploads:
+    post:
+      tags: [Media]
+      operationId: createUpload
+      summary: Upload a photo, video or ID document through the backend to S3
+      description: Send multipart/form-data with purpose and file. The backend validates and streams the file to S3 before returning its uploadId. Use that ID in profile, gallery or onboarding APIs. No frontend S3 upload is required.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [purpose, file]
+              properties:
+                purpose: { $ref: '#/components/schemas/UploadPurpose' }
+                file: { type: string, format: binary }
+      responses:
+        '201':
+          description: File uploaded successfully to S3 and recorded as UPLOADED
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '413': { description: File or multipart request exceeds the upload limit }
+        '503': { description: S3 credentials or configuration are missing or storage is unavailable }
+
+  # ------------------------------------------------------------------ Business Onboarding
+  /business/onboarding:
+    get:
+      tags: [Business Onboarding]
+      operationId: getOnboarding
+      summary: Saved draft and progress, so a provider can leave and return
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OnboardingState' }
+    post:
+      tags: [Business Onboarding]
+      operationId: startOnboarding
+      summary: Begin onboarding for the signed-in user (adds the BUSINESS role)
+      responses:
+        '201':
+          description: Draft created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OnboardingState' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /business/onboarding/steps/{step}:
+    parameters:
+      - name: step
+        in: path
+        required: true
+        schema: { type: string, enum: [ABOUT, LOCATION, SERVICES, AVAILABILITY, WORK, VERIFICATION] }
+    put:
+      tags: [Business Onboarding]
+      operationId: saveOnboardingStep
+      summary: Save one wizard step (body shape depends on `step`)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - { $ref: '#/components/schemas/OnboardingAbout' }
+                - { $ref: '#/components/schemas/OnboardingLocation' }
+                - { $ref: '#/components/schemas/OnboardingServices' }
+                - { $ref: '#/components/schemas/AvailabilityInput' }
+                - { $ref: '#/components/schemas/OnboardingWork' }
+                - { $ref: '#/components/schemas/OnboardingVerification' }
+      responses:
+        '200':
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OnboardingState' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /business/onboarding/preview:
+    get:
+      tags: [Business Onboarding]
+      operationId: getOnboardingPreview
+      summary: How the profile will look to customers (right-hand live preview)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProviderDetail' }
+  /business/onboarding/submit:
+    post:
+      tags: [Business Onboarding]
+      operationId: submitOnboarding
+      summary: Finish onboarding and publish the profile (verification continues asynchronously)
+      responses:
+        '200':
+          description: Submitted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OnboardingState' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  # ------------------------------------------------------------------ Business Dashboard
+  /business/dashboard/overview:
+    get:
+      tags: [Business Dashboard]
+      operationId: getDashboardOverview
+      summary: Stat cards, requests needing a reply, profile completeness
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DashboardOverview' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /business/dashboard/schedule:
+    get:
+      tags: [Business Dashboard]
+      operationId: getDashboardSchedule
+      summary: Week strip of upcoming bookings
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string, format: date } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Booking' }
+  /business/earnings:
+    get:
+      tags: [Business Dashboard]
+      operationId: getEarnings
+      parameters:
+        - { name: month, in: query, schema: { type: string, example: 2026-10 } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Earnings' }
+  /business/reviews:
+    get:
+      tags: [Business Dashboard]
+      operationId: listBusinessReviews
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Size' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReviewPage' }
+  /business/reviews/{reviewId}/reply:
+    parameters:
+      - { name: reviewId, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      tags: [Business Dashboard]
+      operationId: replyToReview
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string, maxLength: 1000 }
+      responses:
+        '200':
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Review' }
+  /business/profile:
+    get:
+      tags: [Business Dashboard]
+      operationId: getBusinessProfile
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BusinessProfile' }
+    patch:
+      tags: [Business Dashboard]
+      operationId: updateBusinessProfile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BusinessProfileUpdate' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BusinessProfile' }
+  /business/availability:
+    get:
+      tags: [Business Dashboard]
+      operationId: getBusinessAvailability
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AvailabilityInput' }
+    put:
+      tags: [Business Dashboard]
+      operationId: updateBusinessAvailability
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AvailabilityInput' }
+      responses:
+        '200':
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AvailabilityInput' }
+  /business/media:
+    get:
+      tags: [Business Dashboard]
+      operationId: listOwnMedia
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Size' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MediaPage' }
+    post:
+      tags: [Business Dashboard]
+      operationId: addOwnMedia
+      summary: Attach an uploaded file (from /media/uploads) to the gallery
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [uploadId]
+              properties:
+                uploadId: { type: string, format: uuid }
+                caption: { type: string, maxLength: 80 }
+      responses:
+        '201':
+          description: Added
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MediaItem' }
+  /business/media/{mediaId}:
+    parameters:
+      - { name: mediaId, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      tags: [Business Dashboard]
+      operationId: deleteOwnMedia
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ------------------------------------------------------------------ Business Services
+  /business/services:
+    get:
+      tags: [Business Services]
+      operationId: listOwnServices
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Service' }
+    post:
+      tags: [Business Services]
+      operationId: createService
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ServiceInput' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Service' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /business/services/{serviceId}:
+    parameters:
+      - { name: serviceId, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      tags: [Business Services]
+      operationId: updateService
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ServiceInput' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Service' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Business Services]
+      operationId: deleteService
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /business/services/{serviceId}/active:
+    parameters:
+      - { name: serviceId, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      tags: [Business Services]
+      operationId: setServiceActive
+      summary: On/off toggle in the services tab
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [active]
+              properties:
+                active: { type: boolean }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Service' }
+
+  # ------------------------------------------------------------------ Business Bookings
+  /business/bookings:
+    get:
+      tags: [Business Bookings]
+      operationId: listBusinessBookings
+      parameters:
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/BookingStatus' }
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Size' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BookingPage' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /business/bookings/{bookingId}/accept:
+    parameters:
+      - { $ref: '#/components/parameters/BookingId' }
+    post:
+      tags: [Business Bookings]
+      operationId: acceptBooking
+      responses:
+        '200':
+          description: Confirmed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Booking' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /business/bookings/{bookingId}/decline:
+    parameters:
+      - { $ref: '#/components/parameters/BookingId' }
+    post:
+      tags: [Business Bookings]
+      operationId: declineBooking
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, maxLength: 500 }
+      responses:
+        '200':
+          description: Declined
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Booking' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /business/bookings/{bookingId}/complete:
+    parameters:
+      - { $ref: '#/components/parameters/BookingId' }
+    post:
+      tags: [Business Bookings]
+      operationId: completeBooking
+      responses:
+        '200':
+          description: Marked done
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Booking' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 'Required access token. Send Authorization: Bearer <accessToken>. Missing, invalid, expired, or revoked tokens return 401.'
+  parameters:
+    ProviderId: { name: providerId, in: path, required: true, schema: { type: string, format: uuid } }
+    BookingId: { name: bookingId, in: path, required: true, schema: { type: string, format: uuid } }
+    City: { name: city, in: query, schema: { type: string }, example: Pune }
+    Page: { name: page, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+    Size: { name: size, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+  responses:
+    BadRequest:
+      description: Validation failed
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Unauthorized:
+      description: Missing or invalid token
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Forbidden:
+      description: Role not allowed (for example, business endpoints without the BUSINESS role)
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    NotFound:
+      description: Resource not found
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Conflict:
+      description: State conflict (slot taken, invalid status transition, duplicate)
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    TooManyRequests:
+      description: Rate limit hit
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+  schemas:
+    UploadPurpose:
+      type: string
+      enum: [AVATAR, COVER, GALLERY_PHOTO, GALLERY_VIDEO, ID_DOCUMENT]
+    UploadResponse:
+      type: object
+      required: [uploadId, status, contentType, sizeBytes]
+      properties:
+        uploadId: { type: string, format: uuid }
+        status: { type: string, enum: [UPLOADED] }
+        contentType: { type: string }
+        sizeBytes: { type: integer, format: int64 }
+    # ---------- common
+    Problem:
+      type: object
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        instance: { type: string }
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { type: string }
+              message: { type: string }
+    Money:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount: { type: integer, format: int64, description: 'Minor units (paise)', example: 120000 }
+        currency: { type: string, example: INR }
+    PageMeta:
+      type: object
+      properties:
+        page: { type: integer }
+        size: { type: integer }
+        totalElements: { type: integer, format: int64 }
+        totalPages: { type: integer }
+    GeoPoint:
+      type: object
+      properties:
+        lat: { type: number, format: double }
+        lng: { type: number, format: double }
+    BookingStatus:
+      type: string
+      enum: [AWAITING_CONFIRMATION, CONFIRMED, COMPLETED, CANCELLED, DECLINED]
+    Fulfilment:
+      type: string
+      enum: [AT_CLIENT, AT_STUDIO, PICKUP, DELIVERY]
+
+    # ---------- auth & account
+    ForgotPasswordRequest:
+      type: object
+      required: [email]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+    ResetPasswordRequest:
+      type: object
+      required: [token, newPassword]
+      properties:
+        token: { type: string, minLength: 43, maxLength: 43, pattern: '^[A-Za-z0-9_-]{43}$', writeOnly: true }
+        newPassword: { type: string, format: password, minLength: 12, maxLength: 72, writeOnly: true, description: At most 72 UTF-8 bytes }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        password: { type: string, format: password, minLength: 12, maxLength: 72, writeOnly: true }
+    RegisterRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        password: { type: string, format: password, minLength: 12, maxLength: 72, writeOnly: true }
+        name: { type: string, maxLength: 120 }
+    TokenPair:
+      type: object
+      properties:
+        accessToken: { type: string }
+        refreshToken: { type: string }
+        expiresIn: { type: integer, description: Seconds }
+    AuthResponse:
+      allOf:
+        - $ref: '#/components/schemas/TokenPair'
+        - type: object
+          properties:
+            newUser: { type: boolean }
+            user: { $ref: '#/components/schemas/UserProfile' }
+    UserProfile:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        phone: { type: string }
+        email: { type: string, format: email }
+        avatarUrl: { type: string, format: uri }
+        roles:
+          type: array
+          items: { type: string, enum: [CUSTOMER, BUSINESS] }
+        businessId: { type: string, format: uuid, nullable: true }
+        unreadNotifications: { type: integer }
+        unreadMessages: { type: integer }
+    UserUpdate:
+      type: object
+      properties:
+        name: { type: string }
+        email: { type: string, format: email }
+        avatarUploadId: { type: string, format: uuid }
+    Address:
+      allOf:
+        - $ref: '#/components/schemas/AddressInput'
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+    AddressInput:
+      type: object
+      required: [line1, city, pincode]
+      properties:
+        label: { type: string, example: Home }
+        line1: { type: string }
+        line2: { type: string }
+        neighbourhood: { type: string }
+        city: { type: string, example: Pune }
+        state: { type: string, example: Maharashtra }
+        pincode: { type: string }
+        location: { $ref: '#/components/schemas/GeoPoint' }
+        isDefault: { type: boolean }
+
+    # ---------- catalog
+    Category:
+      type: object
+      properties:
+        slug: { type: string, example: makeup }
+        name: { type: string, example: Makeup }
+        tint: { type: string, example: blush, description: Pastel tile colour token }
+        providerCount: { type: integer }
+    Badge:
+      type: string
+      enum: [VERIFIED, TOP_RATED, IDENTITY_CHECKED, TRUSTED_BY_NIVA]
+    ProviderSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        businessName: { type: string, example: Meera's Artistry }
+        ownerName: { type: string, example: Meera Kulkarni }
+        category: { type: string }
+        neighbourhood: { type: string, example: Koregaon Park }
+        tags: { type: array, items: { type: string }, example: [Bridal, Party, Lessons] }
+        coverImageUrl: { type: string, format: uri }
+        badges: { type: array, items: { $ref: '#/components/schemas/Badge' } }
+        rating: { type: number, format: float }
+        reviewCount: { type: integer }
+        distanceKm: { type: number, nullable: true }
+        startingPrice: { $ref: '#/components/schemas/Money' }
+        saved: { type: boolean, description: Always false for anonymous callers }
+    ProviderPage:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          properties:
+            content:
+              type: array
+              items: { $ref: '#/components/schemas/ProviderSummary' }
+    HomeResponse:
+      type: object
+      properties:
+        categories:
+          type: array
+          items: { $ref: '#/components/schemas/Category' }
+        featured:
+          type: array
+          items: { $ref: '#/components/schemas/ProviderSummary' }
+    Service:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, example: Signature party makeup }
+        description: { type: string, example: 'Soft glam, lashes included' }
+        durationMinutes: { type: integer, example: 60 }
+        price: { $ref: '#/components/schemas/Money' }
+        fulfilment: { type: array, items: { $ref: '#/components/schemas/Fulfilment' } }
+        active: { type: boolean }
+    ServiceInput:
+      type: object
+      required: [name, durationMinutes, price]
+      properties:
+        name: { type: string, maxLength: 80 }
+        description: { type: string, maxLength: 200 }
+        durationMinutes: { type: integer, minimum: 5 }
+        price: { $ref: '#/components/schemas/Money' }
+        fulfilment: { type: array, items: { $ref: '#/components/schemas/Fulfilment' } }
+    ProviderDetail:
+      allOf:
+        - $ref: '#/components/schemas/ProviderSummary'
+        - type: object
+          properties:
+            bio: { type: string }
+            avatarUrl: { type: string, format: uri }
+            services:
+              type: array
+              items: { $ref: '#/components/schemas/Service' }
+            workMode: { type: string, enum: [STUDIO, TRAVELS_TO_CLIENT, BOTH] }
+            followed: { type: boolean }
+    Slot:
+      type: object
+      properties:
+        startsAt: { type: string, format: date-time }
+        endsAt: { type: string, format: date-time }
+        available: { type: boolean }
+    ProviderSocialProfile:
+      type: object
+      properties:
+        providerId: { type: string, format: uuid }
+        displayName: { type: string }
+        headline: { type: string, example: The person behind the brush }
+        role: { type: string, example: Makeup artist · Pune }
+        bio: { type: string }
+        avatarUrl: { type: string, format: uri }
+        rating: { type: number }
+        reviewCount: { type: integer }
+        memberSince: { type: integer, example: 2019 }
+        stats:
+          type: object
+          properties:
+            yearsWorking: { type: integer }
+            happyClients: { type: integer }
+            averageRating: { type: number }
+        note: { type: string, description: '"A note from..." quote' }
+        area: { type: string, example: 'Koregaon Park, Pune' }
+        availabilityText: { type: string, example: By appointment }
+        followerCount: { type: integer }
+        followed: { type: boolean }
+        studioNotes:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              text: { type: string }
+              postedAt: { type: string, format: date-time }
+    MediaItem:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, enum: [PHOTO, VIDEO] }
+        url: { type: string, format: uri }
+        thumbnailUrl: { type: string, format: uri }
+        caption: { type: string, example: Soft rose bridal }
+        durationSeconds: { type: integer, nullable: true }
+    MediaPage:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          properties:
+            content:
+              type: array
+              items: { $ref: '#/components/schemas/MediaItem' }
+    Review:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        authorName: { type: string }
+        rating: { type: integer, minimum: 1, maximum: 5 }
+        text: { type: string }
+        serviceName: { type: string }
+        createdAt: { type: string, format: date-time }
+        providerReply: { type: string, nullable: true }
+    ReviewInput:
+      type: object
+      required: [rating]
+      properties:
+        rating: { type: integer, minimum: 1, maximum: 5 }
+        text: { type: string, maxLength: 1000 }
+    ReviewPage:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          properties:
+            content:
+              type: array
+              items: { $ref: '#/components/schemas/Review' }
+
+    # ---------- bookings & cart
+    BookingCreate:
+      type: object
+      required: [providerId, serviceId, startsAt, fulfilment]
+      properties:
+        providerId: { type: string, format: uuid }
+        serviceId: { type: string, format: uuid }
+        startsAt: { type: string, format: date-time }
+        fulfilment: { $ref: '#/components/schemas/Fulfilment' }
+        addressId: { type: string, format: uuid, description: 'Required for AT_CLIENT and DELIVERY' }
+        note: { type: string, maxLength: 500 }
+    Booking:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/BookingStatus' }
+        provider: { $ref: '#/components/schemas/ProviderSummary' }
+        customer:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+        service: { $ref: '#/components/schemas/Service' }
+        startsAt: { type: string, format: date-time }
+        endsAt: { type: string, format: date-time }
+        fulfilment: { $ref: '#/components/schemas/Fulfilment' }
+        address: { $ref: '#/components/schemas/Address' }
+        note: { type: string }
+        total: { $ref: '#/components/schemas/Money' }
+        reviewed: { type: boolean }
+        conversationId: { type: string, format: uuid, nullable: true }
+        createdAt: { type: string, format: date-time }
+    BookingPage:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          properties:
+            content:
+              type: array
+              items: { $ref: '#/components/schemas/Booking' }
+    BookingSummary:
+      type: object
+      properties:
+        upcomingCount: { type: integer }
+        doneCount: { type: integer }
+        cancelledCount: { type: integer }
+        cartCount: { type: integer }
+        nextBookingAt: { type: string, format: date-time, nullable: true }
+        nextBookingLabel: { type: string, example: Your next booking is this Saturday. }
+    CartItemInput:
+      type: object
+      required: [providerId, serviceId]
+      properties:
+        providerId: { type: string, format: uuid }
+        serviceId: { type: string, format: uuid }
+        startsAt: { type: string, format: date-time }
+        fulfilment: { $ref: '#/components/schemas/Fulfilment' }
+    Cart:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              provider: { $ref: '#/components/schemas/ProviderSummary' }
+              service: { $ref: '#/components/schemas/Service' }
+              startsAt: { type: string, format: date-time, nullable: true }
+              fulfilment: { $ref: '#/components/schemas/Fulfilment' }
+        total: { $ref: '#/components/schemas/Money' }
+
+    # ---------- messages, assistant, notifications
+    Conversation:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        counterpart:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+            avatarUrl: { type: string, format: uri }
+        lastMessage: { $ref: '#/components/schemas/Message' }
+        unreadCount: { type: integer }
+        booking: { $ref: '#/components/schemas/Booking' }
+    ConversationPage:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          properties:
+            content:
+              type: array
+              items: { $ref: '#/components/schemas/Conversation' }
+    Message:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        conversationId: { type: string, format: uuid }
+        senderId: { type: string, format: uuid }
+        text: { type: string }
+        sentAt: { type: string, format: date-time }
+        readAt: { type: string, format: date-time, nullable: true }
+    AssistantReply:
+      type: object
+      properties:
+        threadId: { type: string, format: uuid }
+        text: { type: string }
+        parsed:
+          type: object
+          description: What the assistant understood from the request
+          properties:
+            category: { type: string }
+            startsAt: { type: string, format: date-time }
+            maxBudget: { $ref: '#/components/schemas/Money' }
+        recommendations:
+          type: array
+          maxItems: 3
+          items:
+            type: object
+            properties:
+              recommendationId: { type: string, format: uuid }
+              provider: { $ref: '#/components/schemas/ProviderSummary' }
+              service: { $ref: '#/components/schemas/Service' }
+              slot: { $ref: '#/components/schemas/Slot' }
+              reason: { type: string }
+    Notification:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, enum: [BOOKING_REQUESTED, BOOKING_CONFIRMED, BOOKING_DECLINED, BOOKING_CANCELLED, MESSAGE, REVIEW, SYSTEM] }
+        title: { type: string }
+        body: { type: string }
+        deepLink: { type: string, example: /bookings/7d1c }
+        read: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    NotificationPage:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          properties:
+            content:
+              type: array
+              items: { $ref: '#/components/schemas/Notification' }
+
+    # ---------- business onboarding
+    OnboardingState:
+      type: object
+      properties:
+        status: { type: string, enum: [DRAFT, SUBMITTED, VERIFIED, REJECTED] }
+        currentStep: { type: string, enum: [ABOUT, LOCATION, SERVICES, AVAILABILITY, WORK, VERIFICATION, DONE] }
+        completedSteps:
+          type: array
+          items: { type: string, enum: [ABOUT, LOCATION, SERVICES, AVAILABILITY, WORK, VERIFICATION] }
+        about: { $ref: '#/components/schemas/OnboardingAbout' }
+        location: { $ref: '#/components/schemas/OnboardingLocation' }
+        services: { $ref: '#/components/schemas/OnboardingServices' }
+        availability: { $ref: '#/components/schemas/AvailabilityInput' }
+        work: { $ref: '#/components/schemas/OnboardingWork' }
+        verification: { $ref: '#/components/schemas/OnboardingVerification' }
+    OnboardingAbout:
+      type: object
+      required: [ownerName, businessName, category]
+      properties:
+        ownerName: { type: string }
+        businessName: { type: string }
+        category: { type: string, example: makeup }
+        bio: { type: string, maxLength: 400 }
+    OnboardingLocation:
+      type: object
+      required: [city, neighbourhood, workMode]
+      properties:
+        city: { type: string }
+        neighbourhood: { type: string }
+        location: { $ref: '#/components/schemas/GeoPoint' }
+        serviceRadiusKm: { type: number }
+        workMode: { type: string, enum: [STUDIO, TRAVELS_TO_CLIENT, BOTH] }
+    OnboardingServices:
+      type: object
+      required: [services]
+      properties:
+        services:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/ServiceInput' }
+        budgetRange:
+          type: object
+          properties:
+            min: { $ref: '#/components/schemas/Money' }
+            max: { $ref: '#/components/schemas/Money' }
+    AvailabilityInput:
+      type: object
+      properties:
+        byAppointmentOnly: { type: boolean }
+        weekly:
+          type: array
+          items:
+            type: object
+            properties:
+              day: { type: string, enum: [MON, TUE, WED, THU, FRI, SAT, SUN] }
+              open: { type: boolean }
+              from: { type: string, example: '09:00' }
+              to: { type: string, example: '18:00' }
+        blockedDates:
+          type: array
+          items: { type: string, format: date }
+    OnboardingWork:
+      type: object
+      properties:
+        avatarUploadId: { type: string, format: uuid }
+        coverUploadId: { type: string, format: uuid }
+        galleryUploadIds:
+          type: array
+          items: { type: string, format: uuid }
+    OnboardingVerification:
+      type: object
+      properties:
+        idDocumentUploadId: { type: string, format: uuid }
+        idType: { type: string, enum: [AADHAAR, PAN, PASSPORT, DRIVING_LICENCE, VOTER_ID] }
+
+    # ---------- business dashboard
+    DashboardOverview:
+      type: object
+      properties:
+        greetingName: { type: string }
+        today: { type: integer }
+        awaitingReply: { type: integer }
+        monthEarnings: { $ref: '#/components/schemas/Money' }
+        rating: { type: number }
+        needsReply:
+          type: array
+          items: { $ref: '#/components/schemas/Booking' }
+        recentReviews:
+          type: array
+          items: { $ref: '#/components/schemas/Review' }
+        profileCompletion:
+          type: object
+          properties:
+            completedSteps: { type: integer }
+            totalSteps: { type: integer }
+            nextStep: { type: string }
+    Earnings:
+      type: object
+      properties:
+        month: { type: string }
+        total: { $ref: '#/components/schemas/Money' }
+        completedBookings: { type: integer }
+        daily:
+          type: array
+          items:
+            type: object
+            properties:
+              date: { type: string, format: date }
+              amount: { $ref: '#/components/schemas/Money' }
+    BusinessProfile:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        ownerName: { type: string }
+        businessName: { type: string }
+        category: { type: string }
+        bio: { type: string }
+        note: { type: string }
+        city: { type: string }
+        neighbourhood: { type: string }
+        workMode: { type: string, enum: [STUDIO, TRAVELS_TO_CLIENT, BOTH] }
+        avatarUrl: { type: string, format: uri }
+        coverImageUrl: { type: string, format: uri }
+        verificationStatus: { type: string, enum: [PENDING, VERIFIED, REJECTED] }
+    BusinessProfileUpdate:
+      type: object
+      properties:
+        businessName: { type: string }
+        bio: { type: string, maxLength: 400 }
+        note: { type: string, maxLength: 300 }
+        neighbourhood: { type: string }
+        workMode: { type: string, enum: [STUDIO, TRAVELS_TO_CLIENT, BOTH] }
+        avatarUploadId: { type: string, format: uuid }
+        coverUploadId: { type: string, format: uuid }

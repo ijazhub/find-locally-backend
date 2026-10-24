@@ -1,0 +1,6 @@
+**
+!Dockerfile
+!pom.xml
+!src/
+!src/**
+src/test/

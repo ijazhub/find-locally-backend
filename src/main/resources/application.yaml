@@ -1,0 +1,64 @@
+spring:
+  application:
+    name: api
+
+  mvc:
+    problemdetails:
+      enabled: true
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 101MB
+      file-size-threshold: 0
+
+  datasource:
+    url: jdbc:postgresql://localhost:5433/findlocally
+    username: sa
+    password: Qwerty@123
+    hikari:
+      maximum-pool-size: 10
+  sql:
+    init:
+      mode: always
+  mail:
+    host: ${MAIL_HOST:}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail.smtp.auth: ${MAIL_SMTP_AUTH:true}
+      mail.smtp.starttls.enable: ${MAIL_STARTTLS:true}
+      mail.smtp.starttls.required: ${MAIL_STARTTLS:true}
+      mail.smtp.connectiontimeout: 5000
+      mail.smtp.timeout: 5000
+      mail.smtp.writetimeout: 5000
+
+app:
+  auth:
+    password-reset:
+      from: ${MAIL_FROM:}
+      url: ${PASSWORD_RESET_URL:http://localhost:4200/reset-password}
+    jwt-secret: ${JWT_SECRET:uwVv6uQDW1ArLm3kDNdEC3X2hBPn0gRvNT3JP0yT9xo=}
+  cors:
+    allowed-origins: http://localhost:4200
+  sqs:
+    # Direct JSON delivery. Set SQS_ENABLED=true and SQS_QUEUE_URL for your deployed queue.
+    enabled: ${SQS_ENABLED:true}
+    queue-url: ${SQS_QUEUE_URL:https://sqs.ap-south-1.amazonaws.com/861477415203/find-locally-onboarding-queue }
+    region: ${AWS_REGION:ap-south-1}
+    # Optional endpoint override for LocalStack; AWS normally resolves its regional endpoint.
+    endpoint: ${SQS_ENDPOINT:}
+    request-timeout-seconds: ${SQS_REQUEST_TIMEOUT_SECONDS:20}
+    # Credentials use the AWS SDK default chain (IAM role, AWS_PROFILE, or AWS_* environment variables).
+  outbox:
+    poll-delay-ms: ${OUTBOX_POLL_DELAY_MS:5000}
+    batch-size: ${OUTBOX_BATCH_SIZE:20}
+    max-attempts: ${OUTBOX_MAX_ATTEMPTS:10}
+    retry-delay-seconds: ${OUTBOX_RETRY_DELAY_SECONDS:30}
+  media:
+    request-timeout-seconds: ${S3_REQUEST_TIMEOUT_SECONDS:120}
+    bucket: ${S3_BUCKET:find-locally-identity-bucket}
+    region: ${AWS_REGION:ap-south-1}
+    public-base-url: ${S3_PUBLIC_BASE_URL:https://find-locally-identity-bucket.s3.ap-south-1.amazonaws.com/}
+    # AWS SDK credentials: use an IAM role, an AWS profile, or environment variables
+    # AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY and (for temporary credentials) AWS_SESSION_TOKEN.

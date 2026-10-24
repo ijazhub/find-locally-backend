@@ -1,0 +1,28 @@
+# Nginx installed on the EC2 host; backend published on host loopback port 8080.
+# Add this server to your Nginx configuration and replace the domain/root.
+# Configure HTTPS with your certificate before using production credentials.
+server {
+    listen 80;
+    server_name CHANGE_ME_DOMAIN;
+    root /var/www/findlocally/browser;
+    index index.html;
+
+    # Match Spring's 101 MB maximum multipart request size.
+    client_max_body_size 101m;
+
+    location /api/ {
+        # No trailing slash: retain the /api/v1/... path.
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 180s;
+        proxy_send_timeout 180s;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
