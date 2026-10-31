@@ -32,7 +32,7 @@ import static org.junit.jupiter.api.Assertions.*;
 @EnabledIfSystemProperty(named = "bookings.postgres.tests", matches = "true")
 @SpringBootTest(properties = {"spring.flyway.enabled=false", "spring.sql.init.mode=never"})
 @Transactional
-class BookingsPersistenceTests {
+class BookingsPersistenceTests extends TemporaryDatabase {
     @Autowired JdbcTemplate jdbc;
     @Autowired BookingsService bookings;
     @Autowired PlatformTransactionManager transactions;
@@ -51,24 +51,10 @@ class BookingsPersistenceTests {
 
     @BeforeEach
     void temporaryTablesAndFixtures() throws Exception {
-        String schema = new ClassPathResource("db/migration/V1__init_schema.sql")
-                .getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
-        Set<String> needed = Set.of("users", "categories", "businesses", "business_badges", "services", "addresses",
-                "business_hours", "business_blocked_dates", "saved_businesses", "bookings", "cart_items",
-                "idempotency_keys", "reviews", "conversations", "notifications");
-        var tables = Pattern.compile("CREATE TABLE (\\w+) \\([\\s\\S]*?\\r?\\n\\);").matcher(schema);
-        int count = 0;
-        while (tables.find()) {
-            if (!needed.contains(tables.group(1))) continue;
-            String ddl = tables.group().replaceFirst("CREATE TABLE", "CREATE TEMP TABLE");
-            jdbc.execute(ddl.substring(0, ddl.length() - 2) + ") ON COMMIT DROP");
-            count++;
-        }
-        assertEquals(needed.size(), count);
-        jdbc.execute("ALTER TABLE pg_temp.idempotency_keys ADD COLUMN request_hash varchar(64)");
         jdbc.update("INSERT INTO pg_temp.users (id, phone, name) VALUES (?, '+919876543210', 'Customer')", customer);
         jdbc.update("INSERT INTO pg_temp.users (id, phone, name) VALUES (?, '+919876543211', 'Other')", other);
         jdbc.update("INSERT INTO pg_temp.users (id, phone, name) VALUES (?, '+919876543212', 'Provider')", providerOwner);
+        jdbc.update("INSERT INTO pg_temp.user_roles(user_id,role) VALUES(?, 'CUSTOMER'),(?, 'CUSTOMER'),(?, 'BUSINESS')",customer,other,providerOwner);
         UUID category = UUID.randomUUID();
         jdbc.update("INSERT INTO pg_temp.categories (id, slug, name) VALUES (?, 'makeup', 'Makeup')", category);
         jdbc.update("""

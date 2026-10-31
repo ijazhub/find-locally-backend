@@ -60,7 +60,7 @@ public class BookingsService {
         if (idempotencyKey == null || input == null || !validator.validate(input).isEmpty()) {
             throw error(HttpStatus.BAD_REQUEST, "Idempotency-Key and valid booking details are required");
         }
-        if (!repository.userExists(customer)) throw error(HttpStatus.UNAUTHORIZED, "User account not found");
+        if (!repository.isCustomerAccount(customer)) throw error(HttpStatus.FORBIDDEN, "A CUSTOMER account is required");
         String hash = requestHash(input);
         var key = repository.claimKey(customer, idempotencyKey, BOOKING_PATH, hash);
         if (!BOOKING_PATH.equals(key.path()) || !hash.equals(key.requestHash())) {
@@ -72,6 +72,8 @@ public class BookingsService {
             throw error(HttpStatus.BAD_REQUEST, "Booking start must be in the future");
         }
         var offer = repository.findOffer(input.getProviderId(), input.getServiceId());
+        repository.releaseExpired(input.getProviderId(), OffsetDateTime.now(clock));
+        if (input.getProposedPrice()!=null && offer!=null) NegotiationService.validateMoney(input.getProposedPrice(),offer.currency());
         if (offer == null) throw error(HttpStatus.NOT_FOUND, "Active provider service not found");
         if (!offer.fulfilment().contains(input.getFulfilment())) {
             throw error(HttpStatus.BAD_REQUEST, "The service does not support this fulfilment");
@@ -90,6 +92,7 @@ public class BookingsService {
         checkAvailability(input, offer, endsAt);
         UUID bookingId;
         try {
+            repository.actor(customer);
             bookingId = repository.insert(customer, input, offer, address, endsAt);
         } catch (DataIntegrityViolationException exception) {
             if (isOverlappingBooking(exception)) {
@@ -112,20 +115,26 @@ public class BookingsService {
         }
         Booking booking = requireBooking(customer, bookingId, true);
         if (booking.getStatus() == BookingStatus.CANCELLED) return booking;
-        if (!List.of(BookingStatus.AWAITING_CONFIRMATION, BookingStatus.CONFIRMED).contains(booking.getStatus())
+        if (booking.getStatus()!=BookingStatus.CONFIRMED && booking.getResponseDeadline()!=null
+                && !booking.getResponseDeadline().toInstant().isAfter(clock.instant()))
+            throw error(HttpStatus.CONFLICT,"Booking response deadline expired");
+        if (!List.of(BookingStatus.AWAITING_CONFIRMATION, BookingStatus.AWAITING_CUSTOMER_APPROVAL, BookingStatus.CONFIRMED).contains(booking.getStatus())
                 || !booking.getStartsAt().toInstant().isAfter(clock.instant())) {
             throw error(HttpStatus.CONFLICT, "Only a pending or confirmed booking that has not started can be cancelled");
         }
+        repository.actor(customer);
         repository.cancel(customer, bookingId, request == null ? null : request.getReason());
         booking.setStatus(BookingStatus.CANCELLED);
         notifications.notify(notifications.businessOwner(booking.getProvider().getId()), "BOOKING_CANCELLED",
                 "Booking cancelled", "A customer cancelled a booking.", "/business/bookings");
-        return booking;
+        return repository.find(customer,bookingId,false);
     }
 
     @Transactional(readOnly = true)
     public Booking getBooking(UUID bookingId) {
-        return requireBooking(currentUser.id(), bookingId, false);
+        var booking=repository.findParticipant(currentUser.id(),bookingId);
+        if(booking==null) throw error(HttpStatus.NOT_FOUND,"Booking not found");
+        return booking;
     }
 
     @Transactional(readOnly = true)
@@ -180,9 +189,13 @@ public class BookingsService {
 
     private String requestHash(BookingCreate input) {
         // Normalize timezone offsets so equivalent instants produce the same idempotency fingerprint.
-        record Payload(UUID provider, UUID service, String startsAt, Fulfilment fulfilment, UUID address, String note) {}
-        String json = mapper.writeValueAsString(new Payload(input.getProviderId(), input.getServiceId(),
-                input.getStartsAt().toInstant().toString(), input.getFulfilment(), input.getAddressId(), input.getNote()));
+        record Payload(UUID provider, UUID service, String startsAt, Fulfilment fulfilment, UUID address, String note, com.findlocally.api.model.Money proposedPrice) {}
+        // Preserve pre-negotiation fingerprints when the optional proposal is omitted, including cart checkout.
+        record LegacyPayload(UUID provider, UUID service, String startsAt, Fulfilment fulfilment, UUID address, String note) {}
+        Object payload=input.getProposedPrice()==null
+                ? new LegacyPayload(input.getProviderId(),input.getServiceId(),input.getStartsAt().toInstant().toString(),input.getFulfilment(),input.getAddressId(),input.getNote())
+                : new Payload(input.getProviderId(),input.getServiceId(),input.getStartsAt().toInstant().toString(),input.getFulfilment(),input.getAddressId(),input.getNote(),input.getProposedPrice());
+        String json = mapper.writeValueAsString(payload);
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(json.getBytes(StandardCharsets.UTF_8)));
         } catch (NoSuchAlgorithmException exception) {

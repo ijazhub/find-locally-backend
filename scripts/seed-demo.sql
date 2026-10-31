@@ -1,7 +1,7 @@
 -- Local demo data only. Run against findlocally after Flyway V1-V7.
 -- Password for all @demo.findlocally.test accounts: DemoLocal@2026!
 -- Deterministic IDs and DO NOTHING preserve demo edits and make reruns additive.
--- One DO statement is atomic. No cloud objects, emails or outbox events are created.
+-- One DO statement is atomic. No cloud objects, emails or external queue deliveries are created.
 DO $demo$
 DECLARE
   names text[] := ARRAY['Demo Glow Studio','Demo Crumb Bakery','Demo Quick Delivery','Demo Feast Catering','Demo Stitch Studio'];

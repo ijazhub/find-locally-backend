@@ -1,4 +1,8 @@
-# Find Locally: demo data and user journeys
+# FindLocally: demo data and user journeys
+
+This seed predates exclusive account types and quotation negotiation. Review the
+[current contract and migration handoff](customer-provider-handoff.md) before using
+the onboarding/booking journey; existing roles require the read-only audit.
 
 ## Demo environment
 
@@ -170,7 +174,7 @@ For a new provider conversation, use `POST /conversations`. Messaging uses REST 
 8. **Preview → submit.** Load `GET /business/onboarding/preview`, then `POST /business/onboarding/submit`.
 9. **Published.** Verify the active listing in discovery. Identity verification status remains a separate concern from publication.
 
-**Success:** all six saved steps permit submission; the business becomes ACTIVE and an immutable BUSINESS_ONBOARDED outbox event is stored in the same transaction. Submission requires configured external integrations where used. For a local-only walkthrough, set `SQS_ENABLED=false` before launching; publication events remain pending locally.
+**Success:** all six saved steps permit submission; the business becomes ACTIVE and its onboarding data stays in PostgreSQL. No JSON snapshot, onboarding outbox event, SQS queue or publisher is required.
 
 ## Journey 7: provider maintains their business
 
@@ -194,10 +198,10 @@ The .test email addresses are fictional and cannot receive real email. Demonstra
 
 ## Boundaries and verification
 
-- No S3 uploads, identity documents, email deliveries or SQS events were fabricated by the seed. Gallery/upload tables remain untouched. Simulated verification badges are demo display data, not evidence of identity checks.
+- No S3 uploads, identity documents, email deliveries or queue events were fabricated by the seed. Gallery/upload tables remain untouched. Simulated verification badges are demo display data, not evidence of identity checks.
 - Assistant operations currently return HTTP 501; exclude assistant recommendations and assistant booking from a working demo.
 - There is no implemented payment collection journey in this API. Checkout creates bookings.
-- SQL seeding bypasses application notifications/outbox side effects; the messages and notifications included here are explicit fixtures.
+- SQL seeding bypasses application-service notifications; database audit triggers still apply. The messages and notifications included here are explicit fixtures. No external queue delivery is performed.
 - Active demo profiles are relational fixtures; their onboarding JSON is not a complete replay of the wizard. Use Priya's draft for onboarding.
 - The seed committed successfully and was rerun without duplicate demo records. Database checks covered counts, booking/service/customer relationships, address ownership, reviews, ratings, hours and overlap constraints. The BCrypt hash was generated and matched using the application's Spring Security dependency.
 - No API process was listening at localhost:8080 during setup. Browser screens, HTTP login and end-to-end actions were not exercised.

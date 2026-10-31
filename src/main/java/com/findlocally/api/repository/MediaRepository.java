@@ -23,6 +23,16 @@ public class MediaRepository {
                         rs.getString("purpose"), rs.getString("object_key"), rs.getString("content_type"), rs.getLong("size_bytes"), rs.getString("status")));
         return rows.isEmpty() ? null : rows.getFirst();
     }
+    public boolean isBusiness(UUID user) {
+        return Boolean.TRUE.equals(db.getSingleField("SELECT EXISTS(SELECT 1 FROM user_roles WHERE user_id=:user AND role='BUSINESS')",new MapSqlParameterSource("user",user),Boolean.class));
+    }
+    public boolean ready(UUID user,UUID id) {
+        return Boolean.TRUE.equals(db.getSingleField("SELECT EXISTS(SELECT 1 FROM uploads WHERE id=:id AND user_id=:user AND processing_state='READY')",new MapSqlParameterSource("id",id).addValue("user",user),Boolean.class));
+    }
+    public void inspected(UUID id,String state,Integer width,Integer height,Integer duration) {
+        db.update("UPDATE uploads SET processing_state=:state,width=:width,height=:height,duration_seconds=:duration WHERE id=:id",
+            new MapSqlParameterSource("id",id).addValue("state",state).addValue("width",width).addValue("height",height).addValue("duration",duration));
+    }
     public void complete(UUID id) {
         db.update("UPDATE uploads SET status = 'UPLOADED' WHERE id = :id", new MapSqlParameterSource("id", id));
     }

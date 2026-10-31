@@ -19,7 +19,7 @@ public class AccountRepository {
 
     public UserProfile profile(UUID user) {
         var rows = dbHelper.getRows("""
-                SELECT u.*, b.id AS business_id,
+                SELECT u.*, b.id AS business_id, b.status AS business_status, b.verification_status,
                     ARRAY(SELECT role FROM user_roles WHERE user_id = u.id ORDER BY role) AS roles,
                     (SELECT count(*)::integer FROM notifications WHERE user_id = u.id AND read_at IS NULL) AS unread_notifications,
                     (SELECT count(*)::integer FROM messages m JOIN conversations c ON c.id = m.conversation_id
@@ -37,6 +37,13 @@ public class AccountRepository {
             try {
                 profile.setRoles(Arrays.stream((String[]) roles.getArray()).map(UserProfile.RolesEnum::fromValue).toList());
             } finally { roles.free(); }
+            if (profile.getRoles().size() != 1) throw new IllegalStateException("Account type audit required");
+            profile.setAccountType(AccountType.fromValue(profile.getRoles().getFirst().getValue()));
+            String onboarding = profile.getAccountType() == AccountType.CUSTOMER ? "NOT_APPLICABLE"
+                    : profile.getBusinessId() == null ? "NOT_STARTED"
+                    : "DRAFT".equals(rs.getString("business_status")) ? "DRAFT"
+                    : "PENDING".equals(rs.getString("verification_status")) ? "SUBMITTED" : rs.getString("verification_status");
+            profile.setOnboardingStatus(UserProfile.OnboardingStatusEnum.fromValue(onboarding));
             return profile;
         });
         return rows.isEmpty() ? null : rows.getFirst();
@@ -57,7 +64,7 @@ public class AccountRepository {
     public String avatarKey(UUID user, UUID upload) {
         return dbHelper.getSingleField("""
                 SELECT object_key FROM uploads WHERE id = :upload AND user_id = :user
-                    AND purpose = 'AVATAR' AND status = 'UPLOADED'
+                    AND purpose = 'AVATAR' AND status = 'UPLOADED' AND processing_state='READY'
                 """, params(user).addValue("upload", upload), String.class);
     }
 

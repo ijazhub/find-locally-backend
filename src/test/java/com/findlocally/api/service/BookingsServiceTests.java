@@ -37,7 +37,7 @@ class BookingsServiceTests {
 
     BookingsServiceTests() {
         when(currentUser.id()).thenReturn(customer);
-        when(repository.userExists(customer)).thenReturn(true);
+        when(repository.isCustomerAccount(customer)).thenReturn(true);
         when(repository.claimKey(eq(customer), eq(key), anyString(), anyString()))
                 .thenAnswer(call -> new IdempotencyRecord(call.getArgument(2), call.getArgument(3), null));
         when(repository.findOffer(provider, serviceId)).thenReturn(
@@ -97,6 +97,15 @@ class BookingsServiceTests {
     }
 
     @Test
+    void omittedProposalPreservesTheLegacyIdempotencyFingerprint() {
+        record Legacy(UUID provider,UUID service,String startsAt,Fulfilment fulfilment,UUID address,String note) {}
+        var input=input();
+        String original=com.findlocally.api.utility.BookingRequests.hash(new Legacy(provider,serviceId,input.getStartsAt().toInstant().toString(),input.getFulfilment(),null,null));
+        service.createBooking(key,input);
+        verify(repository).claimKey(customer,key,"/api/v1/bookings",original);
+    }
+
+    @Test
     void equivalentTimezoneOffsetsHaveTheSameRequestHash() {
         service.createBooking(key, input());
         service.createBooking(key, input().startsAt(input().getStartsAt().withOffsetSameInstant(ZoneOffset.UTC)));
@@ -113,6 +122,13 @@ class BookingsServiceTests {
         assertStatus(HttpStatus.BAD_REQUEST, () -> service.createBooking(key, input().fulfilment(Fulfilment.AT_CLIENT)));
         assertStatus(HttpStatus.BAD_REQUEST, () -> service.createBooking(key, input().addressId(UUID.randomUUID())));
         verify(repository, never()).insert(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void localMidnightEndDoesNotOccupyTheNextBlockedDate() {
+        when(repository.findOffer(provider,serviceId)).thenReturn(new Offer(60,50000L,"INR",List.of(Fulfilment.AT_STUDIO),true));
+        service.createBooking(key,input().startsAt(OffsetDateTime.parse("2026-10-19T17:30:00Z")));
+        verify(repository).blocked(provider,LocalDate.of(2026,10,19),LocalDate.of(2026,10,19));
     }
 
     @Test
@@ -138,6 +154,7 @@ class BookingsServiceTests {
     void cancellationIsOwnerScopedLockedAndRetryable() {
         var booking = booking();
         when(repository.find(customer, bookingId, true)).thenReturn(booking);
+        when(repository.find(customer, bookingId, false)).thenReturn(booking);
         assertEquals(BookingStatus.CANCELLED, service.cancelBooking(bookingId, null).getStatus());
         assertEquals(BookingStatus.CANCELLED, service.cancelBooking(bookingId, null).getStatus());
         verify(repository, times(1)).cancel(customer, bookingId, null);

@@ -52,7 +52,7 @@ public class MailPasswordResetSender implements PasswordResetSender {
         var message = new SimpleMailMessage();
         message.setFrom(from);
         message.setTo(email);
-        message.setSubject("Reset your Find Locally password");
+        message.setSubject("Reset your FindLocally password");
         // Fragments are read by the frontend and are not sent in HTTP requests or Referer headers.
         message.setText("Open this link to reset your password within 15 minutes:\n\n" + resetUrl + "#token=" + token
                 + "\n\nIf you did not request this change, you can ignore this email.");

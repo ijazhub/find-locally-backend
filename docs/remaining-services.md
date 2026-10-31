@@ -1,5 +1,8 @@
 # Remaining API implementations
 
+The [customer/provider handoff](customer-provider-handoff.md) supersedes the older
+account-role, booking negotiation and media-publication behavior described here.
+
 All non-assistant service/repository skeletons are implemented. Assistant operations retain their 501 responses.
 
 ## Behavior to review

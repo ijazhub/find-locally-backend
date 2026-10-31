@@ -218,6 +218,7 @@ class AccountAuthPersistenceTests extends TemporaryDatabase {
         assertEquals(first.getId(), accounts.listAddresses().getFirst().getId());
         UUID other = UUID.randomUUID();
         jdbc.update("INSERT INTO pg_temp.users (id, phone) VALUES (?, '+919876543211')", other);
+        jdbc.update("INSERT INTO pg_temp.user_roles(user_id,role) VALUES(?, 'CUSTOMER')",other);
         signIn(other);
         assertThrows(ResponseStatusException.class, () -> nested(() -> accounts.updateAddress(first.getId(), address("Foreign").isDefault(true))));
         assertThrows(ResponseStatusException.class, () -> nested(() -> accounts.deleteAddress(second.getId())));
@@ -233,8 +234,8 @@ class AccountAuthPersistenceTests extends TemporaryDatabase {
         signIn(user);
         UUID upload = UUID.randomUUID();
         jdbc.update("""
-                INSERT INTO pg_temp.uploads (id, user_id, purpose, content_type, size_bytes, object_key, status)
-                VALUES (?, ?, 'AVATAR', 'image/png', 10, 'avatars/my photo.png', 'UPLOADED')
+                INSERT INTO pg_temp.uploads (id, user_id, purpose, content_type, size_bytes, object_key, status, processing_state)
+                VALUES (?, ?, 'AVATAR', 'image/png', 10, 'avatars/my photo.png', 'UPLOADED','READY')
                 """, upload, user);
         assertEquals("https://media.example.com/avatars/my%20photo.png",
                 accounts.updateMe(new UserUpdate().avatarUploadId(upload)).getAvatarUrl().toString());

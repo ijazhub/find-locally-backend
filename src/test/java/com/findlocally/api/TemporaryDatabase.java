@@ -39,6 +39,13 @@ abstract class TemporaryDatabase {
         jdbc.execute(resets.substring(0, resets.indexOf("CREATE INDEX"))
                 .replace("CREATE TABLE password_reset_tokens", "CREATE TEMP TABLE password_reset_tokens")
                 .replace(");", ") ON COMMIT DROP;"));
+        for (String migration : new String[]{"V7__outbox_events.sql","V8__exclusive_accounts_and_negotiation.sql","V9__media_processing_and_publication.sql","V10__rename_brand_badge.sql"}) {
+            String sql=new ClassPathResource("db/migration/"+migration).getContentAsString(java.nio.charset.StandardCharsets.UTF_8)
+                    .replace("CREATE TABLE ","CREATE TEMP TABLE ")
+                    .replace("CREATE FUNCTION ","CREATE FUNCTION pg_temp.")
+                    .replace("EXECUTE FUNCTION ","EXECUTE FUNCTION pg_temp.");
+            jdbc.execute(sql);
+        }
     }
 
     @AfterEach

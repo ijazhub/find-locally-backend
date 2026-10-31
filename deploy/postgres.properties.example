@@ -1,0 +1,5 @@
+# Shared by Docker Compose and Spring Boot. Keep NAME=value syntax.
+# Copy to postgres.properties and set local credentials before starting.
+POSTGRES_DB=findlocally
+POSTGRES_USER=sa
+POSTGRES_PASSWORD=Qwerty@123

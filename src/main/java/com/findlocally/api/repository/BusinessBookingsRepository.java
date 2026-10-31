@@ -10,7 +10,7 @@ public class BusinessBookingsRepository {
     private final DbHelper db;
     public BusinessBookingsRepository(DbHelper db) { this.db = db; }
     public void transition(UUID business, UUID id, String status, String reason) {
-        db.update("UPDATE bookings SET status = :status, decline_reason = :reason WHERE id = :id AND business_id = :business",
+        db.update("UPDATE bookings SET status = :status, agreed_amount = CASE WHEN :status='CONFIRMED' THEN proposed_amount ELSE agreed_amount END, decline_reason = :reason WHERE id = :id AND business_id = :business",
                 new MapSqlParameterSource("business", business).addValue("id", id).addValue("status", status).addValue("reason", reason));
     }
 }

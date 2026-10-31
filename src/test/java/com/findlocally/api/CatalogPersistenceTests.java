@@ -38,6 +38,7 @@ class CatalogPersistenceTests extends TemporaryDatabase {
     @BeforeEach
     void fixtures() {
         jdbc.update("INSERT INTO pg_temp.users (id, phone) VALUES (?, '+919876543210')", viewer);
+        jdbc.update("INSERT INTO pg_temp.user_roles(user_id,role) VALUES(?, 'CUSTOMER')",viewer);
         jdbc.update("INSERT INTO pg_temp.categories (id, slug, name) VALUES (?, 'makeup', 'Makeup')", category);
         near = provider("Near Studio", "ACTIVE", 18.53, 73.90, "VERIFIED");
         far = provider("Far Studio", "ACTIVE", 19.07, 72.87, "PENDING");
@@ -51,6 +52,7 @@ class CatalogPersistenceTests extends TemporaryDatabase {
     private UUID provider(String name, String status, double lat, double lng, String verification) {
         UUID owner = UUID.randomUUID(), id = UUID.randomUUID();
         jdbc.update("INSERT INTO pg_temp.users (id, phone) VALUES (?, ?)", owner, "+" + Math.abs((long) owner.hashCode()));
+        jdbc.update("INSERT INTO pg_temp.user_roles(user_id,role) VALUES(?, 'BUSINESS')",owner);
         jdbc.update("""
                 INSERT INTO pg_temp.businesses (id, owner_user_id, status, business_name, category_id, city, neighbourhood,
                     lat, lng, verification_status, work_mode, bio)
@@ -106,8 +108,8 @@ class CatalogPersistenceTests extends TemporaryDatabase {
         assertTrue(slots.stream().allMatch(Slot::getAvailable));
         jdbc.update("""
                 INSERT INTO pg_temp.bookings (customer_id, business_id, service_id, starts_at, ends_at,
-                    fulfilment, service_name, duration_minutes, price_amount)
-                VALUES (?, ?, ?, '2026-10-19 04:30:00+00', '2026-10-19 05:30:00+00', 'AT_STUDIO', 'Makeup', 60, 50000)
+                    fulfilment, service_name, duration_minutes, price_amount,proposed_amount,hold_expires_at,response_deadline)
+                VALUES (?, ?, ?, '2026-10-19 04:30:00+00', '2026-10-19 05:30:00+00', 'AT_STUDIO', 'Makeup', 60, 50000,50000,'2026-10-16T00:00:00Z','2026-10-16T00:00:00Z')
                 """, viewer, near, service);
         var busy = catalog.getProviderSlots(near, service, monday);
         assertEquals(List.of(true, false, false, false, true), busy.stream().map(Slot::getAvailable).toList());

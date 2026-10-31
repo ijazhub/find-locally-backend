@@ -88,12 +88,14 @@ class WorkflowPersistenceTests {
         var submitted = mapper.readValue(call("POST", "/business/onboarding/submit", ownerToken, null, 200), OnboardingState.class);
         assertEquals(OnboardingState.StatusEnum.SUBMITTED, submitted.getStatus());
         assertEquals(6, submitted.getCompletedSteps().size());
+        assertEquals(0, context.getBean(org.springframework.jdbc.core.JdbcTemplate.class).queryForObject(
+                "SELECT count(*) FROM outbox_events WHERE aggregate_id=?", Integer.class, provider));
         var publicProfile = mapper.readValue(call("GET", "/providers/" + provider + "/profile", customerToken, null, 200), ProviderSocialProfile.class);
         assertEquals("Owner", publicProfile.getDisplayName());
         var gallery = mapper.readValue(call("GET", "/providers/" + provider + "/media", customerToken, null, 200), MediaPage.class);
         assertEquals(1, gallery.getTotalElements());
         assertFalse(gallery.getContent().getFirst().getUrl().toString().contains("private/"));
-        verify(storage, times(2)).upload(anyString(), anyString(), eq(100L), any(InputStream.class));
+        verify(storage, times(2)).upload(anyString(), anyString(), anyLong(), any(InputStream.class));
         verify(storage, never()).verify(anyString(), anyString(), anyLong());
         call("GET", "/providers/" + provider + "/availability?serviceId=" + service + "&date=2030-10-07", customerToken, null, 200);
 
@@ -149,14 +151,14 @@ class WorkflowPersistenceTests {
     }
 
     private AuthResponse register(String email, String name) throws Exception {
-        return mapper.readValue(call("POST", "/auth/register", null, Map.of("email", email, "password", PASSWORD, "name", name), 201), AuthResponse.class);
+        return mapper.readValue(call("POST", "/auth/register", null, Map.of("email", email, "password", PASSWORD, "name", name, "accountType", name.equals("Owner")?"BUSINESS":"CUSTOMER"), 201), AuthResponse.class);
     }
     private AuthResponse login(String email) throws Exception {
         return mapper.readValue(call("POST", "/auth/login", null, Map.of("email", email, "password", PASSWORD), 200), AuthResponse.class);
     }
     private UUID upload(String token, String purpose, String contentType) throws Exception {
         var result = mvc.perform(MockMvcRequestBuilders.multipart("/api/v1/media/uploads")
-                        .file(new MockMultipartFile("file", "upload", contentType, new byte[100])).param("purpose", purpose)
+                        .file(new MockMultipartFile("file", "upload", contentType, contentType.equals("application/pdf") ? "%PDF-1.7 test".getBytes(java.nio.charset.StandardCharsets.US_ASCII) : TestMedia.jpeg())).param("purpose", purpose)
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
         return mapper.readValue(result, UploadResponse.class).getUploadId();

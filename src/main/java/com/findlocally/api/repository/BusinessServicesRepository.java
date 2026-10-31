@@ -22,12 +22,12 @@ public class BusinessServicesRepository {
     }
 
     public UUID findBusinessId(UUID ownerId) {
-        return dbHelper.getSingleField("SELECT id FROM businesses WHERE owner_user_id = :ownerId",
+        return dbHelper.getSingleField("SELECT id FROM businesses WHERE owner_user_id = :ownerId AND EXISTS (SELECT 1 FROM user_roles r WHERE r.user_id=:ownerId AND r.role='BUSINESS')",
                 new MapSqlParameterSource("ownerId", ownerId), UUID.class);
     }
 
     public UUID lockBusiness(UUID ownerId) {
-        return dbHelper.getSingleField("SELECT id FROM businesses WHERE owner_user_id = :ownerId FOR UPDATE",
+        return dbHelper.getSingleField("SELECT id FROM businesses WHERE owner_user_id = :ownerId AND EXISTS (SELECT 1 FROM user_roles r WHERE r.user_id=:ownerId AND r.role='BUSINESS') FOR UPDATE",
                 new MapSqlParameterSource("ownerId", ownerId), UUID.class);
     }
 

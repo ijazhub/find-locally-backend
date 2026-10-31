@@ -16,9 +16,15 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1")
 public class BusinessBookingsController implements BusinessBookingsApi {
     private final BusinessBookingsService service;
+    private final com.findlocally.api.service.NegotiationService negotiation;
 
-    public BusinessBookingsController(BusinessBookingsService service) {
-        this.service = service;
+    public BusinessBookingsController(BusinessBookingsService service, com.findlocally.api.service.NegotiationService negotiation) {
+        this.service = service; this.negotiation = negotiation;
+    }
+
+    @Override
+    public ResponseEntity<Booking> issueQuotation(UUID bookingId, UUID idempotencyKey, com.findlocally.api.model.QuotationInput input) {
+        return ResponseEntity.ok(negotiation.issue(bookingId,idempotencyKey,input));
     }
 
     @Override
@@ -32,8 +38,8 @@ public class BusinessBookingsController implements BusinessBookingsApi {
     }
 
     @Override
-    public ResponseEntity<Booking> declineBooking(UUID bookingId, CancelBookingRequest cancelBookingRequest) {
-        return ResponseEntity.status(200).body(service.declineBooking(bookingId, cancelBookingRequest));
+    public ResponseEntity<Booking> declineBooking(UUID bookingId, com.findlocally.api.model.DeclineBookingRequest request) {
+        return ResponseEntity.status(200).body(service.declineBooking(bookingId, new CancelBookingRequest().reason(request.getReason())));
     }
 
     @Override

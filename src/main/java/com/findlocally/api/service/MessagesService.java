@@ -41,6 +41,7 @@ public class MessagesService {
     }
     @Transactional public Conversation startConversation(StartConversationRequest input) {
         UUID user = current.id(); inputs.valid(input);
+        if (!bookings.isCustomerAccount(user)) throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN,"A CUSTOMER account is required to initiate chat");
         if (catalog.provider(input.getProviderId(), user) == null) throw Inputs.missing("Provider");
         UUID owner = notifications.businessOwner(input.getProviderId());
         if (user.equals(owner)) throw Inputs.bad("You cannot start a conversation with your own business");

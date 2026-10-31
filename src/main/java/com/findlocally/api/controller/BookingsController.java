@@ -16,9 +16,15 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1")
 public class BookingsController implements BookingsApi {
     private final BookingsService service;
+    private final com.findlocally.api.service.NegotiationService negotiation;
 
-    public BookingsController(BookingsService service) {
-        this.service = service;
+    public BookingsController(BookingsService service, com.findlocally.api.service.NegotiationService negotiation) {
+        this.service = service; this.negotiation = negotiation;
+    }
+
+    @Override
+    public ResponseEntity<Booking> respondToQuotation(UUID bookingId, UUID idempotencyKey, com.findlocally.api.model.QuotationResponse input) {
+        return ResponseEntity.ok(negotiation.respond(bookingId,idempotencyKey,input));
     }
 
     @Override

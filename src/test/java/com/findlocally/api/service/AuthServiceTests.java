@@ -45,6 +45,17 @@ class AuthServiceTests {
     }
 
     @Test
+    void registrationSelectsBusinessTypeWithoutAssigningCustomer() {
+        when(repository.register(eq("provider@example.com"),anyString(),eq("Provider"),eq("BUSINESS"))).thenReturn(user);
+        when(accounts.profile(user)).thenReturn(new UserProfile().id(user).accountType(com.findlocally.api.model.AccountType.BUSINESS)
+                .onboardingStatus(UserProfile.OnboardingStatusEnum.NOT_STARTED));
+        var result=service.register(new RegisterRequest().email("provider@example.com").password(PASSWORD).name("Provider").accountType(com.findlocally.api.model.AccountType.BUSINESS));
+        assertEquals(com.findlocally.api.model.AccountType.BUSINESS,result.getUser().getAccountType());
+        assertEquals(UserProfile.OnboardingStatusEnum.NOT_STARTED,result.getUser().getOnboardingStatus());
+        verify(repository,never()).register(anyString(),anyString(),any());
+    }
+
+    @Test
     void wrongMissingAndLockedCredentialsDoNotIssueTokens() {
         var request = new LoginRequest().email("asha@example.com").password(PASSWORD);
         assertThrows(AuthService.InvalidCredentialsException.class, () -> service.login(request));

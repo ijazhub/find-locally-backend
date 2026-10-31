@@ -32,7 +32,7 @@ import static org.junit.jupiter.api.Assertions.*;
 @SpringBootTest(properties = {"spring.flyway.enabled=false", "spring.sql.init.mode=never",
         "app.media.public-base-url=https://media.example.com/"})
 @Transactional
-class BusinessPersistenceTests {
+class BusinessPersistenceTests extends TemporaryDatabase {
     @Autowired JdbcTemplate jdbc;
     @Autowired BusinessOnboardingService onboarding;
     @Autowired BusinessServicesService services;
@@ -41,26 +41,8 @@ class BusinessPersistenceTests {
 
     @BeforeEach
     void temporaryTables() throws Exception {
-        String schema = new ClassPathResource("db/migration/V1__init_schema.sql")
-                .getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
-        Set<String> needed = Set.of("users", "user_roles", "uploads", "categories", "businesses",
-                "business_verifications", "services", "business_hours", "business_blocked_dates", "business_media");
-        var tables = Pattern.compile("CREATE TABLE (\\w+) \\([\\s\\S]*?\\r?\\n\\);").matcher(schema);
-        int count = 0;
-        while (tables.find()) {
-            if (!needed.contains(tables.group(1))) continue;
-            String ddl = tables.group().replaceFirst("CREATE TABLE", "CREATE TEMP TABLE");
-            jdbc.execute(ddl.substring(0, ddl.length() - 2) + ") ON COMMIT DROP");
-            count++;
-        }
-        assertEquals(needed.size(), count);
-        jdbc.execute("ALTER TABLE pg_temp.businesses ADD COLUMN onboarding_data jsonb NOT NULL DEFAULT '{}'");
-        String outbox = new ClassPathResource("db/migration/V7__outbox_events.sql")
-                .getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
-        jdbc.execute(outbox.substring(0, outbox.indexOf("CREATE INDEX"))
-                .replace("CREATE TABLE outbox_events", "CREATE TEMP TABLE outbox_events")
-                .replace("\n);", "\n) ON COMMIT DROP;"));
         jdbc.update("INSERT INTO pg_temp.users (id, phone) VALUES (?, ?)", owner, "+919876543210");
+        jdbc.update("INSERT INTO pg_temp.user_roles(user_id,role) VALUES(?, 'BUSINESS')",owner);
         jdbc.update("INSERT INTO pg_temp.categories (slug, name) VALUES ('makeup', 'Makeup')");
         signIn(owner);
     }
@@ -114,17 +96,7 @@ class BusinessPersistenceTests {
         assertEquals(OnboardingState.StatusEnum.SUBMITTED, onboarding.getOnboarding().getStatus());
         assertEquals("ACTIVE", jdbc.queryForObject("SELECT status FROM pg_temp.businesses", String.class));
         assertEquals("PENDING", jdbc.queryForObject("SELECT status FROM pg_temp.business_verifications", String.class));
-        assertEquals("PENDING", jdbc.queryForObject("SELECT status FROM pg_temp.outbox_events", String.class));
-        String payload = jdbc.queryForObject("SELECT payload FROM pg_temp.outbox_events", String.class);
-        var event = new tools.jackson.databind.ObjectMapper().readTree(payload);
-        assertEquals(1, event.path("schemaVersion").asInt());
-        assertEquals("BUSINESS_ONBOARDED", event.path("eventType").asText());
-        assertEquals("Asha Studio", event.path("business").path("name").asText());
-        assertEquals(50000, event.path("business").path("services").get(0).path("price").path("amount").asInt());
-        assertFalse(payload.contains(avatar.toString()));
-        assertFalse(payload.contains(photo.toString()));
-        assertFalse(payload.contains(document.toString()));
-        assertFalse(payload.contains("https://media.example.com"));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM pg_temp.outbox_events", Integer.class));
     }
 
     @Test
@@ -136,6 +108,7 @@ class BusinessPersistenceTests {
         assertEquals("Updated", services.updateService(created.getId(), serviceInput("Updated")).getName());
         UUID other = UUID.randomUUID();
         jdbc.update("INSERT INTO pg_temp.users (id, phone) VALUES (?, ?)", other, "+919876543211");
+        jdbc.update("INSERT INTO pg_temp.user_roles(user_id,role) VALUES(?, 'BUSINESS')",other);
         repository.create(other);
         signIn(other);
         // A failed service call marks the shared test transaction rollback-only; raw repository
@@ -163,8 +136,8 @@ class BusinessPersistenceTests {
     private UUID upload(String purpose, String key, String contentType) {
         UUID id = UUID.randomUUID();
         jdbc.update("""
-                INSERT INTO pg_temp.uploads (id, user_id, purpose, object_key, content_type, size_bytes, status)
-                VALUES (?, ?, ?, ?, ?, 10, 'UPLOADED')
+                INSERT INTO pg_temp.uploads (id, user_id, purpose, object_key, content_type, size_bytes, status, processing_state)
+                VALUES (?, ?, ?, ?, ?, 10, 'UPLOADED','READY')
                 """, id, owner, purpose, key, contentType);
         return id;
     }

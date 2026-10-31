@@ -23,8 +23,8 @@ public class BusinessOnboardingRepository {
     public record Draft(UUID id, String status, OnboardingState state) {}
     public record Upload(UUID id, String purpose, String objectKey, String contentType) {}
 
-    public boolean userExists(UUID ownerId) {
-        return Boolean.TRUE.equals(dbHelper.getSingleField("SELECT EXISTS (SELECT 1 FROM users WHERE id = :id)",
+    public boolean isBusinessAccount(UUID ownerId) {
+        return Boolean.TRUE.equals(dbHelper.getSingleField("SELECT EXISTS (SELECT 1 FROM users u JOIN user_roles r ON r.user_id=u.id AND r.role='BUSINESS' WHERE u.id = :id)",
                 params(ownerId), Boolean.class));
     }
 
@@ -35,18 +35,11 @@ public class BusinessOnboardingRepository {
                 """, params(ownerId)) == 1;
     }
 
-    public void addBusinessRole(UUID ownerId) {
-        dbHelper.insertWithoutKey("""
-                INSERT INTO user_roles (user_id, role) VALUES (:id, 'BUSINESS')
-                ON CONFLICT DO NOTHING
-                """, params(ownerId));
-    }
-
     /** Serialize draft writes on the business row so parallel step saves cannot overwrite progress. */
     public Draft find(UUID ownerId, boolean lock) {
         var rows = dbHelper.getRows("""
                 SELECT id, status, verification_status, current_step, completed_steps, onboarding_data::text
-                FROM businesses WHERE owner_user_id = :id
+                FROM businesses WHERE owner_user_id = :id AND EXISTS (SELECT 1 FROM user_roles r WHERE r.user_id=:id AND r.role='BUSINESS')
                 """ + (lock ? " FOR UPDATE" : ""), params(ownerId), (rs, row) -> {
             var state = mapper.readValue(rs.getString("onboarding_data"), OnboardingState.class);
             String status = rs.getString("status");
@@ -140,7 +133,7 @@ public class BusinessOnboardingRepository {
     public Upload findUpload(UUID ownerId, UUID uploadId) {
         var rows = dbHelper.getRows("""
                 SELECT id, purpose, object_key, content_type FROM uploads
-                WHERE id = :id AND user_id = :owner AND status = 'UPLOADED'
+                WHERE id = :id AND user_id = :owner AND status = 'UPLOADED' AND (purpose IN ('GALLERY_PHOTO','GALLERY_VIDEO','ID_DOCUMENT') OR processing_state='READY')
                 """, params(uploadId).addValue("owner", ownerId),
                 (rs, row) -> new Upload(rs.getObject("id", UUID.class), rs.getString("purpose"),
                         rs.getString("object_key"), rs.getString("content_type")));
@@ -173,49 +166,6 @@ public class BusinessOnboardingRepository {
 
     public void publish(UUID id) {
         dbHelper.update("UPDATE businesses SET status = 'ACTIVE', current_step = 'DONE' WHERE id = :id", params(id));
-    }
-
-    /** Called inside the onboarding transaction: snapshot and publication intent commit together. */
-    public void enqueueOnboarded(UUID id) {
-        UUID eventId = UUID.randomUUID();
-        String payload = dbHelper.getSingleField("""
-                SELECT jsonb_build_object(
-                    'schemaVersion', 1, 'eventId', CAST(:eventId AS text),
-                    'eventType', 'BUSINESS_ONBOARDED', 'occurredAt', CURRENT_TIMESTAMP,
-                    'businessId', b.id,
-                    'business', jsonb_build_object(
-                        'id', b.id, 'ownerUserId', b.owner_user_id,
-                        'name', b.business_name, 'ownerName', b.owner_name,
-                        'category', c.slug, 'bio', b.bio, 'headline', b.headline,
-                        'note', b.note, 'tags', b.tags, 'city', b.city,
-                        'neighbourhood', b.neighbourhood,
-                        'location', jsonb_build_object('lat', b.lat, 'lng', b.lng),
-                        'serviceRadiusKm', b.service_radius_km, 'workMode', b.work_mode,
-                        'startedYear', b.started_year, 'status', b.status,
-                        'verificationStatus', b.verification_status,
-                        'budgetRange', b.onboarding_data -> 'services' -> 'budgetRange',
-                        'availability', b.onboarding_data -> 'availability',
-                        'services', COALESCE((SELECT jsonb_agg(jsonb_build_object(
-                            'id', s.id, 'name', s.name, 'description', s.description,
-                            'durationMinutes', s.duration_minutes,
-                            'price', jsonb_build_object('amount', s.price_amount, 'currency', s.currency),
-                            'fulfilment', s.fulfilment, 'active', s.active
-                        ) ORDER BY s.sort_order, s.id) FROM services s
-                            WHERE s.business_id = b.id AND s.deleted_at IS NULL), '[]'::jsonb)
-                    )
-                )::text
-                FROM businesses b JOIN categories c ON c.id = b.category_id WHERE b.id = :id
-                """, params(id).addValue("eventId", eventId), String.class);
-        if (payload == null) throw new IllegalStateException("Business snapshot not found");
-        // Keep the complete immutable JSON; SQS cannot carry a payload exceeding 1 MiB.
-        if (payload.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 1_048_576) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                    org.springframework.http.HttpStatus.PAYLOAD_TOO_LARGE, "Business event exceeds the SQS message limit");
-        }
-        dbHelper.insertWithoutKey("""
-                INSERT INTO outbox_events (id, aggregate_id, event_type, payload)
-                VALUES (:eventId, :id, 'BUSINESS_ONBOARDED', :payload)
-                """, params(id).addValue("eventId", eventId).addValue("payload", payload));
     }
 
     public ProviderDetail preview(UUID id) {
