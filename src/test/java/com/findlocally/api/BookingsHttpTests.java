@@ -22,6 +22,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 class BookingsHttpTests {
     @MockitoBean org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate jdbc;
     @MockitoBean BookingsService bookings;
+    @MockitoBean com.findlocally.api.service.NegotiationService negotiation;
     @Autowired WebApplicationContext context;
     private MockMvc mvc;
 
@@ -46,6 +47,27 @@ class BookingsHttpTests {
                 .header("Idempotency-Key", UUID.randomUUID()).contentType("application/json")
                 .content("{}")).andExpect(status().isBadRequest());
         verifyNoInteractions(bookings);
+    }
+
+    @Test
+    void quotationRoutesRequireAuthenticationAndCompleteVersionedInput() throws Exception {
+        UUID id=UUID.randomUUID();
+        mvc.perform(post("/api/v1/business/bookings/"+id+"/quotations")).andExpect(status().isUnauthorized());
+        mvc.perform(post("/api/v1/bookings/"+id+"/quotation-response")).andExpect(status().isUnauthorized());
+        mvc.perform(post("/api/v1/bookings/"+id+"/quotation-response").with(user(UUID.randomUUID().toString()))
+                .header("Idempotency-Key",UUID.randomUUID()).contentType("application/json").content("{\"decision\":\"ACCEPT\"}"))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(negotiation);
+    }
+
+    @Test
+    void quotationHttpContractBindsMinorUnitsAndIdempotencyKey() throws Exception {
+        UUID id=UUID.randomUUID(),key=UUID.randomUUID();
+        when(negotiation.issue(eq(id),eq(key),any())).thenReturn(new Booking().id(id).status(BookingStatus.AWAITING_CUSTOMER_APPROVAL));
+        mvc.perform(post("/api/v1/business/bookings/"+id+"/quotations").with(user(UUID.randomUUID().toString()))
+                .header("Idempotency-Key",key).contentType("application/json").content("{\"price\":{\"amount\":48000,\"currency\":\"INR\"}}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("AWAITING_CUSTOMER_APPROVAL"));
+        verify(negotiation).issue(id,key,new QuotationInput().price(new Money(48000L,"INR")));
     }
 
     @Test

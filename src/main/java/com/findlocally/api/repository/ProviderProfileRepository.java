@@ -26,7 +26,7 @@ public class ProviderProfileRepository {
             Integer started = rs.getObject("started_year", Integer.class);
             var result = new ProviderSocialProfile().providerId(provider)
                     .displayName(rs.getString("owner_name") == null ? rs.getString("user_name") : rs.getString("owner_name"))
-                    .headline(rs.getString("headline")).role(rs.getString("category_name") + " · " + rs.getString("city"))
+                    .businessName(rs.getString("business_name")).headline(rs.getString("headline")).role(rs.getString("category_name") + " · " + rs.getString("city"))
                     .bio(rs.getString("bio")).rating(rs.getBigDecimal("rating_avg")).reviewCount(rs.getInt("review_count"))
                     .memberSince(created).note(rs.getString("note")).area(rs.getString("neighbourhood") + ", " + rs.getString("city"))
                     .availabilityText(rs.getBoolean("by_appointment_only") ? "By appointment" : "See available time slots")
@@ -45,7 +45,10 @@ public class ProviderProfileRepository {
         return result;
     }
     public MediaPage media(UUID business, String type, Pages page) {
-        String where = " WHERE business_id = :id" + (type == null ? "" : " AND type = :type");
+        return media(business,type,page,false);
+    }
+    public MediaPage media(UUID business, String type, Pages page, boolean owner) {
+        String where = " WHERE business_id = :id" + (owner ? "" : " AND processing_state='READY' AND publication_state='PUBLISHED'") + (type == null ? "" : " AND type = :type");
         var params = new MapSqlParameterSource("id", business).addValue("type", type);
         long count = db.getSingleField("SELECT count(*) FROM business_media" + where, params, Long.class);
         return new MediaPage().page(page.page()).size(page.size()).totalElements(count).totalPages(page.totalPages(count))
@@ -65,6 +68,22 @@ public class ProviderProfileRepository {
                 .addValue("type", upload.purpose().equals("GALLERY_VIDEO") ? "VIDEO" : "PHOTO")
                 .addValue("url", url).addValue("caption", caption), this::mapMedia).getFirst();
     }
+    public MediaItem ownedMedia(UUID business,UUID id) {
+        var rows=db.getRows("SELECT * FROM business_media WHERE business_id=:business AND id=:id FOR UPDATE",
+          new MapSqlParameterSource("business",business).addValue("id",id),this::mapMedia);
+        return rows.isEmpty()?null:rows.getFirst();
+    }
+    public void metadata(UUID business,UUID id,MediaUpdate input,String thumbnail) {
+        db.update("""
+          UPDATE business_media SET caption=COALESCE(:caption,caption),
+            presentation_format=COALESCE(:format,presentation_format),publication_state=COALESCE(:publication,publication_state),
+            cover_upload_id=COALESCE(:cover,cover_upload_id),thumbnail_url=COALESCE(:thumbnail,thumbnail_url)
+          WHERE business_id=:business AND id=:id
+          """,new MapSqlParameterSource("business",business).addValue("id",id).addValue("caption",input.getCaption())
+          .addValue("format",input.getPresentationFormat()==null?null:input.getPresentationFormat().getValue())
+          .addValue("publication",input.getPublicationState()==null?null:input.getPublicationState().getValue())
+          .addValue("cover",input.getCoverUploadId()).addValue("thumbnail",thumbnail));
+    }
     public int deleteMedia(UUID business, UUID id) {
         return db.update("DELETE FROM business_media WHERE id = :id AND business_id = :business",
                 new MapSqlParameterSource("id", id).addValue("business", business));
@@ -74,6 +93,11 @@ public class ProviderProfileRepository {
                 .url(URI.create(rs.getString("url"))).caption(rs.getString("caption")).durationSeconds(rs.getObject("duration_seconds", Integer.class));
         String thumb = rs.getString("thumbnail_url");
         if (thumb != null) media.setThumbnailUrl(URI.create(thumb));
+        media.setPresentationFormat(MediaItem.PresentationFormatEnum.fromValue(rs.getString("presentation_format")));
+        media.setProcessingState(MediaItem.ProcessingStateEnum.fromValue(rs.getString("processing_state")));
+        media.setPublicationState(MediaItem.PublicationStateEnum.fromValue(rs.getString("publication_state")));
+        media.setWidth(rs.getObject("width",Integer.class)); media.setHeight(rs.getObject("height",Integer.class));
+        if (media.getProcessingState()!=MediaItem.ProcessingStateEnum.READY || media.getPublicationState()!=MediaItem.PublicationStateEnum.PUBLISHED) media.setUrl(null);
         return media;
     }
 }

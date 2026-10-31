@@ -49,6 +49,7 @@ class RemainingServicesPersistenceTests extends TemporaryDatabase {
     void fixtures() {
         jdbc.update("INSERT INTO pg_temp.users (id, phone, name) VALUES (?, '+919876543210', 'Customer'), (?, '+919876543211', 'Other'), (?, '+919876543212', 'Owner')",
                 customer, other, owner);
+        jdbc.update("INSERT INTO pg_temp.user_roles(user_id,role) VALUES(?, 'CUSTOMER'),(?, 'CUSTOMER'),(?, 'BUSINESS')",customer,other,owner);
         UUID category = UUID.randomUUID();
         jdbc.update("INSERT INTO pg_temp.categories (id, slug, name) VALUES (?, 'makeup', 'Makeup')", category);
         jdbc.update("""
@@ -185,7 +186,7 @@ class RemainingServicesPersistenceTests extends TemporaryDatabase {
         signIn(owner);
         assertEquals(BookingStatus.CONFIRMED, businessBookings.acceptBooking(created.getId()).getStatus());
         failure(HttpStatus.CONFLICT, () -> businessBookings.completeBooking(created.getId()));
-        jdbc.update("UPDATE pg_temp.bookings SET starts_at = '2026-10-14 10:00+00', ends_at = '2026-10-14 11:00+00' WHERE id = ?", created.getId());
+        jdbc.update("UPDATE pg_temp.bookings SET starts_at = '2026-10-14 10:00+00', ends_at = '2026-10-14 11:00+00', hold_expires_at='2026-10-14 09:00+00', response_deadline='2026-10-14 09:00+00' WHERE id = ?", created.getId());
         businessBookings.completeBooking(created.getId());
         signIn(other);
         failure(HttpStatus.NOT_FOUND, () -> reviews.createReview(created.getId(), new ReviewInput().rating(5)));
@@ -218,10 +219,10 @@ class RemainingServicesPersistenceTests extends TemporaryDatabase {
     @Test
     void backendUploadsCompleteBeforeGalleryAttachmentAndStayOwned() {
         signIn(owner);
-        var slot = media.createUpload(UploadPurpose.GALLERY_PHOTO, new MockMultipartFile("file", "photo.jpg", "image/jpeg", new byte[100]));
+        var slot = media.createUpload(UploadPurpose.GALLERY_PHOTO, new MockMultipartFile("file", "photo.jpg", "image/jpeg", TestMedia.jpeg()));
         assertEquals("UPLOADED", jdbc.queryForObject("SELECT status FROM pg_temp.uploads WHERE id = ?", String.class, slot.getUploadId()));
         var attached = dashboard.addOwnMedia(new AddOwnMediaRequest().uploadId(slot.getUploadId()).caption("My work"));
-        verify(storage).upload(anyString(), eq("image/jpeg"), eq(100L), any(InputStream.class));
+        verify(storage).upload(anyString(), eq("image/jpeg"), anyLong(), any(InputStream.class));
         verify(storage, never()).verify(anyString(), anyString(), anyLong());
         assertEquals("UPLOADED", jdbc.queryForObject("SELECT status FROM pg_temp.uploads WHERE id = ?", String.class, slot.getUploadId()));
         assertEquals(attached.getId(), dashboard.addOwnMedia(new AddOwnMediaRequest().uploadId(slot.getUploadId())).getId());

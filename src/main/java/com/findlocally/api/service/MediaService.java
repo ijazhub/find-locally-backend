@@ -17,6 +17,12 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class MediaService {
+    @org.springframework.beans.factory.annotation.Autowired
+    private MediaInspector inspector = new MediaInspector("ffprobe","ffmpeg",600,8192);
+    @org.springframework.beans.factory.annotation.Value("${app.media.image-limit-mib:10}")
+    private long imageLimit=10;
+    @org.springframework.beans.factory.annotation.Value("${app.media.video-limit-mib:100}")
+    private long videoLimit=100;
     private final MediaRepository repository;
     private final ObjectStorage storage;
     private final CurrentUser current;
@@ -34,8 +40,10 @@ public class MediaService {
         boolean allowed = video ? Set.of("video/mp4", "video/webm").contains(type)
                 : Set.of("image/jpeg", "image/png", "image/webp").contains(type) || (document && type.equals("application/pdf"));
         if (!allowed) throw Inputs.bad("Unsupported file content type for this purpose");
-        if (size > (video ? 100L : 10L) * 1024 * 1024)
+        if (size > (video ? videoLimit : imageLimit) * 1024 * 1024)
             throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE, "Images and documents allow 10 MiB; videos allow 100 MiB");
+        if (!purpose.equals("AVATAR") && !repository.isBusiness(user)) throw new ResponseStatusException(HttpStatus.FORBIDDEN,"A BUSINESS account is required for business uploads");
+        var inspection=inspector.inspect(file,document);
         UUID id = UUID.randomUUID();
         String key = (document ? "private/" : "public/") + user + "/" + id;
         repository.create(id, user, purpose, key, type, size);
@@ -53,6 +61,7 @@ public class MediaService {
                 cleanupRegistered = true;
             }
             repository.complete(id);
+            repository.inspected(id,inspection.state(),inspection.width(),inspection.height(),inspection.duration());
         } catch (IOException exception) {
             if (uploaded && !cleanupRegistered) cleanup(key);
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Could not read the uploaded file. Please retry.");
@@ -60,7 +69,9 @@ public class MediaService {
             if (uploaded && !cleanupRegistered) cleanup(key);
             throw exception;
         }
-        return new UploadResponse().uploadId(id).status(UploadResponse.StatusEnum.UPLOADED).contentType(type).sizeBytes(size);
+        return new UploadResponse().uploadId(id).status(UploadResponse.StatusEnum.UPLOADED).contentType(type).sizeBytes(size)
+                .processingState(UploadResponse.ProcessingStateEnum.fromValue(inspection.state()))
+                .width(inspection.width()).height(inspection.height()).durationSeconds(inspection.duration());
     }
     private void cleanup(String key) {
         try { storage.delete(key); }
@@ -72,10 +83,9 @@ public class MediaService {
     public MediaRepository.Upload confirm(UUID user, UUID id, Set<String> purposes) {
         var upload = repository.lock(user, id);
         if (upload == null || !purposes.contains(upload.purpose())) throw Inputs.bad("Choose an owned upload with the correct purpose");
-        if (!"UPLOADED".equals(upload.status())) {
-            storage.verify(upload.key(), upload.contentType(), upload.size());
-            repository.complete(id);
-        }
+        if (!"UPLOADED".equals(upload.status())) throw Inputs.conflict("Finish upload transfer before attaching it");
+        if ((purposes.contains("COVER") || purposes.contains("AVATAR")) && !repository.ready(user,id))
+            throw Inputs.conflict("Image processing is not ready");
         return upload;
     }
 }

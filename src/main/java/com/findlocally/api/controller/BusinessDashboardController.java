@@ -31,6 +31,10 @@ public class BusinessDashboardController implements BusinessDashboardApi {
     }
 
     @Override
+    public ResponseEntity<MediaItem> updateOwnMedia(UUID mediaId,com.findlocally.api.model.MediaUpdate input) {
+        return ResponseEntity.ok(service.updateOwnMedia(mediaId,input));
+    }
+    @Override
     public ResponseEntity<MediaItem> addOwnMedia(AddOwnMediaRequest addOwnMediaRequest) {
         return ResponseEntity.status(201).body(service.addOwnMedia(addOwnMediaRequest));
     }

@@ -44,7 +44,9 @@ public class AuthService {
         String email = email(request.getEmail());
         password(request.getPassword());
         if (request.getName() != null && request.getName().length() > 120) throw badRequest("Name is too long");
-        UUID user = repository.register(email, passwords.encode(request.getPassword()), request.getName());
+        UUID user = request.getAccountType() == AccountType.BUSINESS
+                ? repository.register(email, passwords.encode(request.getPassword()), request.getName(), "BUSINESS")
+                : repository.register(email, passwords.encode(request.getPassword()), request.getName());
         if (user == null) throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already registered");
         return response(user, true);
     }
@@ -85,7 +87,7 @@ public class AuthService {
         var now = OffsetDateTime.now(clock);
         if (session == null || session.revokedAt() != null || !session.expiresAt().isAfter(now)) throw unauthorized();
         repository.revoke(session.id(), session.user(), now);
-        return issue(session.user());
+        return issue(session.user()).user(accounts.profile(session.user()));
     }
 
     @Transactional

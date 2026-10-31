@@ -52,7 +52,10 @@ public class BusinessDashboardService {
         UUID business = access.id();
         var today = LocalDate.now(clock.withZone(zone));
         var result = repository.overview(business, today.atStartOfDay(zone).toOffsetDateTime(), today.plusDays(1).atStartOfDay(zone).toOffsetDateTime());
-        result.setMonthEarnings(repository.earnings(business, YearMonth.now(clock.withZone(zone)), zone).getTotal());
+        var values=repository.earnings(business, YearMonth.now(clock.withZone(zone)), zone);
+        result.setMonthEarnings(values.getTotal());
+        result.setMonthBookingValues(values.getTotals());
+        result.setQuotationsAwaitingApproval(bookings.businessPage(business, BookingStatus.AWAITING_CUSTOMER_APPROVAL, null, null, Pages.of(0,5)).getContent());
         result.setNeedsReply(bookings.businessPage(business, BookingStatus.AWAITING_CONFIRMATION, null, null, Pages.of(0, 5)).getContent());
         result.setRecentReviews(reviews.page(business, Pages.of(0, 5)).getContent());
         return result;
@@ -80,13 +83,27 @@ public class BusinessDashboardService {
         return result;
     }
     @Transactional(readOnly = true) public MediaPage listOwnMedia(Integer page, Integer size) {
-        return profiles.media(access.id(), null, Pages.of(page, size));
+        return profiles.media(access.id(), null, Pages.of(page, size),true);
     }
     @Transactional public MediaItem addOwnMedia(AddOwnMediaRequest input) {
         UUID business = access.lock(); inputs.valid(input);
         var upload = media.confirm(current.id(), input.getUploadId(), Set.of("GALLERY_PHOTO", "GALLERY_VIDEO"));
         var existing = profiles.findMedia(business, upload.id());
-        return existing != null ? existing : profiles.addMedia(business, upload, urls.url(upload.key()), input.getCaption());
+        var item=existing != null ? existing : profiles.addMedia(business, upload, urls.url(upload.key()), input.getCaption());
+        var metadata=new MediaUpdate().caption(input.getCaption()).coverUploadId(input.getCoverUploadId());
+        if(input.getPresentationFormat()!=null) metadata.setPresentationFormat(MediaUpdate.PresentationFormatEnum.fromValue(input.getPresentationFormat().getValue()));
+        if(input.getPublicationState()!=null) metadata.setPublicationState(MediaUpdate.PublicationStateEnum.fromValue(input.getPublicationState().getValue()));
+        return updateOwnMedia(item.getId(),metadata);
+    }
+    @Transactional public MediaItem updateOwnMedia(UUID id,MediaUpdate input) {
+        UUID business=access.lock(); inputs.valid(input);
+        var item=profiles.ownedMedia(business,id);
+        if(item==null) throw Inputs.missing("Media item");
+        if(input.getPresentationFormat()==MediaUpdate.PresentationFormatEnum.REEL && item.getType()!=MediaItem.TypeEnum.VIDEO) throw Inputs.bad("Only VIDEO may use REEL format");
+        if(input.getPublicationState()==MediaUpdate.PublicationStateEnum.PUBLISHED && item.getProcessingState()!=MediaItem.ProcessingStateEnum.READY) throw Inputs.conflict("Only READY media may be published");
+        String thumb=input.getCoverUploadId()==null?null:urls.url(media.confirm(current.id(),input.getCoverUploadId(),Set.of("COVER","GALLERY_PHOTO")).key());
+        profiles.metadata(business,id,input,thumb);
+        return profiles.ownedMedia(business,id);
     }
     @Transactional public void deleteOwnMedia(UUID id) {
         if (profiles.deleteMedia(access.lock(), id) == 0) throw Inputs.missing("Media item");

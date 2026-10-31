@@ -68,6 +68,10 @@ public class AuthRepository {
     }
 
     public UUID register(String email, String hash, String name) {
+        return register(email, hash, name, "CUSTOMER");
+    }
+
+    public UUID register(String email, String hash, String name, String accountType) {
         var rows = dbHelper.getRows("""
                 INSERT INTO users (email, password_hash, name) VALUES (:email, :hash, :name)
                 ON CONFLICT DO NOTHING RETURNING id
@@ -75,7 +79,7 @@ public class AuthRepository {
                 (rs, row) -> rs.getObject("id", UUID.class));
         if (rows.isEmpty()) return null;
         UUID user = rows.getFirst();
-        dbHelper.insertWithoutKey("INSERT INTO user_roles (user_id, role) VALUES (:id, 'CUSTOMER')", new MapSqlParameterSource("id", user));
+        dbHelper.insertWithoutKey("INSERT INTO user_roles (user_id, role) VALUES (:id, :role)", new MapSqlParameterSource("id", user).addValue("role", accountType));
         return user;
     }
 

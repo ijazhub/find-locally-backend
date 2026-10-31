@@ -1,6 +1,30 @@
-# Find Locally API
+# FindLocally API
 
 Java 21 / Spring Boot API. Build and verify with `mvn clean test`.
+
+## Local PostgreSQL with Docker Compose
+
+Compose and Spring Boot share `deploy/postgres.properties`. For a fresh checkout:
+
+```powershell
+Copy-Item deploy/postgres.properties.example deploy/postgres.properties
+# Set POSTGRES_USER and POSTGRES_PASSWORD in deploy/postgres.properties.
+docker compose up -d postgres
+```
+
+Run the API from the repository root so Spring imports the properties file.
+PostgreSQL listens on `localhost:5433`, and its data persists in the Compose volume.
+The local properties file is ignored by Git. Deployed applications can continue
+using `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, and
+`SPRING_DATASOURCE_PASSWORD` instead. PostgreSQL initialization credentials apply
+only when the data volume is empty; changing the file does not reset an existing
+database user's password.
+
+Customer/provider account separation, booking quotations, temporary holds and media
+publication are documented in [the frontend handoff](docs/customer-provider-handoff.md).
+V8 deliberately blocks ambiguous historical account roles; run the read-only
+[account audit](docs/account-type-audit.sql) and approve remediation before rollout.
+The handoff also describes the coordinated cutover and database audit events.
 
 ## Docker on EC2 behind Nginx
 
@@ -28,8 +52,8 @@ provides only a local development database. Its localhost URL cannot be used
 unchanged inside the API container. Flyway runs automatically at startup.
 Supply production database credentials and a unique base64 JWT secret through
 the environment file; the application's checked-in defaults are for development.
-Configure SMTP for password reset, and S3/SQS for the deployed AWS resources.
-Attach an EC2 instance role with the required S3/SQS permissions. When using
+Configure SMTP for password reset, and S3 for the deployed AWS resources.
+Attach an EC2 instance role with the required S3 permissions. When using
 IMDSv2 credentials from a bridged container, configure the instance metadata
 response hop limit to 2 so the container can obtain credentials.
 
@@ -65,43 +89,11 @@ All non-assistant controllers have service and repository implementations.
 Assistant operations remain intentionally unimplemented and return HTTP 501.
 Business onboarding saves all six steps, previews drafts, and publishes profiles.
 
-Business onboarding submission also stores an immutable JSON event in `outbox_events`
-in the same database transaction. No JSON file is written to disk or S3. The SQS body
-is the JSON itself, using the same schema for every category: `schemaVersion`,
-`eventId`, `eventType`, `occurredAt`, `businessId`, and `business`. The business object
-contains identity, category, description, location, work mode, budget, availability,
-services, and verification status. Photos, videos, media URLs, upload IDs and identity
-documents are excluded. The snapshot remains unchanged during retries.
-
-SQS and outbox settings are in `src/main/resources/application.yaml`.
-Set `SQS_ENABLED=true`, `SQS_QUEUE_URL` to the full queue URL, and `AWS_REGION`.
-Use the AWS credential chain; the application role needs `sqs:SendMessage` on that
-queue (and KMS permissions if the queue uses a customer managed key). Provision the
-queue separately. `SQS_ENDPOINT` is optional for local emulators. Existing S3 media
-configuration remains in `application.yaml`.
-
-The publisher locks one due row at a time with PostgreSQL `FOR UPDATE SKIP LOCKED`,
-sends it with a bounded timeout, and commits `SENT` with the SQS message ID. Failure
-records `RETRY`, attempts, a sanitized error class, and the next attempt time; after
-`OUTBOX_MAX_ATTEMPTS` it records `FAILED`. The queue may be standard or FIFO; FIFO
-uses the business ID as its group and event ID as its deduplication ID. When disabled,
-events still accumulate durably as `PENDING`. Monitor pending age and failed rows.
-To manually replay a failed event after correcting the cause:
-
-```sql
-UPDATE outbox_events
-SET status = 'RETRY', attempts = 0, next_attempt_at = now(), last_error = NULL
-WHERE id = '<event UUID>' AND status = 'FAILED';
-```
-
-The Python consumer should parse `json.loads(message['Body'])`, validate
-`schemaVersion == 1` and `eventType == 'BUSINESS_ONBOARDED'`, and deduplicate by
-`eventId` in persistent storage. Delete the SQS message only after its processing
-transaction commits. A crash between SQS send and database commit can cause a
-duplicate. `SENT` means accepted by SQS, not processed by Python; consumer processing
-status requires a separate acknowledgement integration. Configure visibility timeout
-and a dead letter queue on the consumer queue for processing failures. The producer
-rejects snapshots exceeding SQS's 1 MiB body limit, rolling back submission.
+Business onboarding saves the business, onboarding progress, services, availability,
+media references and verification status directly in PostgreSQL. Submission marks
+the profile ACTIVE in the same transaction; it creates no JSON snapshot or onboarding
+outbox event. There is no SQS client, publisher, queue configuration or dependency.
+Booking transition/quotation audit events remain database-only records.
 
 Customer and business APIs cover discovery, availability, bookings, carts,
 reviews, messaging, notifications, media, profiles, services, and dashboards.
@@ -126,7 +118,9 @@ responses, database helper edge cases, ownership, and complete workflows.
 start time, and fulfilment before checkout. Omitted optional values are cleared.
 
 `POST /api/v1/media/uploads` accepts multipart fields `purpose` and `file`.
-The backend streams the file to S3 and returns a completed `uploadId`; the frontend
+The backend inspects the file, streams it to S3 and returns its `uploadId` and
+`processingState`. `UPLOADED` describes transfer completion; only `READY` media
+can be published. The frontend
 does not upload to S3 separately. Reuse that ID in profile, gallery or onboarding
 requests. The previous JSON upload-slot format is no longer accepted. Messaging
 uses REST; the live-message broker and `/ws` endpoint have been removed.

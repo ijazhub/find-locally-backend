@@ -1,12 +1,12 @@
 openapi: 3.0.3
 info:
-  title: Niva API
+  title: FindLocally API
   version: 1.0.0
   description: |
-    Backend for Niva, a local-business discovery and booking platform (customers and independent providers).
+    Backend for FindLocally, a local-business discovery and booking platform (customers and independent providers).
     Built for Spring Boot 3 (springdoc-openapi / Spring Web). Errors use RFC 7807 problem details (Spring's `ProblemDetail`).
     Money is always integer minor units (paise). Timestamps are ISO-8601 UTC; dates are `YYYY-MM-DD`.
-    Roles: `CUSTOMER`, `BUSINESS`. One account may hold both roles.
+    Roles: `CUSTOMER`, `BUSINESS`. Each account has exactly one immutable account type.
     Authentication: all operations require `Authorization: Bearer <accessToken>` unless they explicitly declare `security: []`.
     Registration, login, refresh, forgot-password, and reset-password are exempt; refresh validates its refresh token and password reset validates a single-use email token.
 servers:
@@ -720,7 +720,7 @@ paths:
     post:
       tags: [Assistant]
       operationId: askAssistant
-      summary: '"Ask Niva": free-text request, returns up to three provider recommendations'
+      summary: '"Ask FindLocally": free-text request, returns up to three provider recommendations'
       description: |
         Example: "makeup artist tomorrow 6pm, under 2000".
         The server parses intent (category, date and time, budget), finds matching providers with open slots, and ranks them.
@@ -837,7 +837,7 @@ paths:
     post:
       tags: [Business Onboarding]
       operationId: startOnboarding
-      summary: Begin onboarding for the signed-in user (adds the BUSINESS role)
+      summary: Begin onboarding for the signed-in BUSINESS account
       responses:
         '201':
           description: Draft created
@@ -1047,6 +1047,9 @@ paths:
               required: [uploadId]
               properties:
                 uploadId: { type: string, format: uuid }
+                presentationFormat: { type: string, enum: [STANDARD, REEL] }
+                publicationState: { type: string, enum: [DRAFT, PUBLISHED] }
+                coverUploadId: { type: string, format: uuid }
                 caption: { type: string, maxLength: 80 }
       responses:
         '201':
@@ -1057,6 +1060,21 @@ paths:
   /business/media/{mediaId}:
     parameters:
       - { name: mediaId, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      tags: [Business Dashboard]
+      operationId: updateOwnMedia
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MediaUpdate' }
+      responses:
+        '200':
+          description: Updated owned media
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MediaItem' }
+        '409': { $ref: '#/components/responses/Conflict' }
     delete:
       tags: [Business Dashboard]
       operationId: deleteOwnMedia
@@ -1179,12 +1197,11 @@ paths:
       tags: [Business Bookings]
       operationId: declineBooking
       requestBody:
+        required: true
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                reason: { type: string, maxLength: 500 }
+              $ref: '#/components/schemas/DeclineBookingRequest'
       responses:
         '200':
           description: Declined
@@ -1204,6 +1221,49 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Booking' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /business/bookings/{bookingId}/quotations:
+    post:
+      tags: [Business Bookings]
+      operationId: issueQuotation
+      description: Issue or supersede a quotation. Does not confirm the booking. The response deadline is capped by the original holdExpiresAt. Reusing an Idempotency-Key with different input returns 409.
+      parameters:
+        - $ref: '#/components/parameters/BookingId'
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QuotationInput' }
+      responses:
+        '200':
+          description: Updated booking
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Booking' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /bookings/{bookingId}/quotation-response:
+    post:
+      tags: [Bookings]
+      operationId: respondToQuotation
+      description: Only the booking customer may respond. quotationId and version must identify the current unexpired revision. REJECT requires a reason. A stale revision, expired deadline or invalid state returns 409.
+      parameters:
+        - $ref: '#/components/parameters/BookingId'
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QuotationResponse' }
+      responses:
+        '200':
+          description: Updated booking
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Booking' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '409': { $ref: '#/components/responses/Conflict' }
 
 components:
@@ -1260,7 +1320,11 @@ components:
       required: [uploadId, status, contentType, sizeBytes]
       properties:
         uploadId: { type: string, format: uuid }
-        status: { type: string, enum: [UPLOADED] }
+        status: { type: string, enum: [UPLOADED], description: S3 transfer completed; inspect processingState before attaching or publishing }
+        processingState: { type: string, enum: [PENDING, READY, FAILED] }
+        width: { type: integer, nullable: true }
+        height: { type: integer, nullable: true }
+        durationSeconds: { type: integer, nullable: true }
         contentType: { type: string }
         sizeBytes: { type: integer, format: int64 }
     # ---------- common
@@ -1283,7 +1347,7 @@ components:
       type: object
       required: [amount, currency]
       properties:
-        amount: { type: integer, format: int64, description: 'Minor units (paise)', example: 120000 }
+        amount: { type: integer, format: int64, minimum: 0, description: 'Minor units (paise)', example: 120000 }
         currency: { type: string, example: INR }
     PageMeta:
       type: object
@@ -1299,7 +1363,7 @@ components:
         lng: { type: number, format: double }
     BookingStatus:
       type: string
-      enum: [AWAITING_CONFIRMATION, CONFIRMED, COMPLETED, CANCELLED, DECLINED]
+      enum: [AWAITING_CONFIRMATION, AWAITING_CUSTOMER_APPROVAL, CONFIRMED, COMPLETED, CANCELLED, DECLINED, EXPIRED]
     Fulfilment:
       type: string
       enum: [AT_CLIENT, AT_STUDIO, PICKUP, DELIVERY]
@@ -1328,30 +1392,40 @@ components:
       properties:
         email: { type: string, format: email, maxLength: 254 }
         password: { type: string, format: password, minLength: 12, maxLength: 72, writeOnly: true }
+        accountType: { $ref: '#/components/schemas/AccountType' }
         name: { type: string, maxLength: 120 }
+    AccountType:
+      type: string
+      enum: [CUSTOMER, BUSINESS]
     TokenPair:
       type: object
       properties:
         accessToken: { type: string }
         refreshToken: { type: string }
         expiresIn: { type: integer, description: Seconds }
+        user: { $ref: '#/components/schemas/UserProfile' }
     AuthResponse:
       allOf:
         - $ref: '#/components/schemas/TokenPair'
         - type: object
           properties:
             newUser: { type: boolean }
-            user: { $ref: '#/components/schemas/UserProfile' }
     UserProfile:
       type: object
+      required: [id, accountType, onboardingStatus]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
         phone: { type: string }
         email: { type: string, format: email }
         avatarUrl: { type: string, format: uri }
+        accountType: { $ref: '#/components/schemas/AccountType' }
+        onboardingStatus: { type: string, enum: [NOT_APPLICABLE, NOT_STARTED, DRAFT, SUBMITTED, VERIFIED, REJECTED] }
         roles:
           type: array
+          minItems: 1
+          maxItems: 1
+          deprecated: true
           items: { type: string, enum: [CUSTOMER, BUSINESS] }
         businessId: { type: string, format: uuid, nullable: true }
         unreadNotifications: { type: integer }
@@ -1392,7 +1466,7 @@ components:
         providerCount: { type: integer }
     Badge:
       type: string
-      enum: [VERIFIED, TOP_RATED, IDENTITY_CHECKED, TRUSTED_BY_NIVA]
+      enum: [VERIFIED, TOP_RATED, IDENTITY_CHECKED, TRUSTED_BY_FINDLOCALLY]
     ProviderSummary:
       type: object
       properties:
@@ -1467,6 +1541,7 @@ components:
       type: object
       properties:
         providerId: { type: string, format: uuid }
+        businessName: { type: string }
         displayName: { type: string }
         headline: { type: string, example: The person behind the brush }
         role: { type: string, example: Makeup artist · Pune }
@@ -1494,15 +1569,27 @@ components:
               id: { type: string, format: uuid }
               text: { type: string }
               postedAt: { type: string, format: date-time }
+    MediaUpdate:
+      type: object
+      properties:
+        presentationFormat: { type: string, enum: [STANDARD, REEL] }
+        publicationState: { type: string, enum: [DRAFT, PUBLISHED] }
+        coverUploadId: { type: string, format: uuid }
+        caption: { type: string, maxLength: 80 }
     MediaItem:
       type: object
       properties:
         id: { type: string, format: uuid }
         type: { type: string, enum: [PHOTO, VIDEO] }
-        url: { type: string, format: uri }
-        thumbnailUrl: { type: string, format: uri }
+        url: { type: string, format: uri, nullable: true, description: Absent or null for unfinished or draft content }
+        thumbnailUrl: { type: string, format: uri, nullable: true }
         caption: { type: string, example: Soft rose bridal }
         durationSeconds: { type: integer, nullable: true }
+        width: { type: integer }
+        height: { type: integer }
+        presentationFormat: { type: string, enum: [STANDARD, REEL] }
+        processingState: { type: string, enum: [PENDING, READY, FAILED] }
+        publicationState: { type: string, enum: [DRAFT, PUBLISHED] }
     MediaPage:
       allOf:
         - $ref: '#/components/schemas/PageMeta'
@@ -1537,10 +1624,40 @@ components:
               items: { $ref: '#/components/schemas/Review' }
 
     # ---------- bookings & cart
+    DeclineBookingRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 500, example: Unavailable for this request }
+    QuotationInput:
+      type: object
+      required: [price]
+      properties:
+        price: { $ref: '#/components/schemas/Money' }
+      example: { price: { amount: 48000, currency: INR } }
+    QuotationResponse:
+      type: object
+      required: [quotationId, version, decision]
+      properties:
+        quotationId: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        decision: { type: string, enum: [ACCEPT, REJECT] }
+        reason: { type: string, maxLength: 500 }
+      example: { quotationId: '123e4567-e89b-12d3-a456-426614174000', version: 2, decision: ACCEPT }
+    Quotation:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        version: { type: integer }
+        price: { $ref: '#/components/schemas/Money' }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        state: { type: string, enum: [CURRENT, SUPERSEDED, ACCEPTED, REJECTED, EXPIRED] }
     BookingCreate:
       type: object
       required: [providerId, serviceId, startsAt, fulfilment]
       properties:
+        proposedPrice: { $ref: '#/components/schemas/Money' }
         providerId: { type: string, format: uuid }
         serviceId: { type: string, format: uuid }
         startsAt: { type: string, format: date-time }
@@ -1564,6 +1681,21 @@ components:
         fulfilment: { $ref: '#/components/schemas/Fulfilment' }
         address: { $ref: '#/components/schemas/Address' }
         note: { type: string }
+        listedPrice: { $ref: '#/components/schemas/Money' }
+        proposedPrice: { $ref: '#/components/schemas/Money' }
+        agreedPrice:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/Money'
+        holdExpiresAt: { type: string, format: date-time }
+        responseDeadline: { type: string, format: date-time }
+        declineReason: { type: string }
+        allowedActions:
+          type: array
+          items: { type: string }
+        quotations:
+          type: array
+          items: { $ref: '#/components/schemas/Quotation' }
         total: { $ref: '#/components/schemas/Money' }
         reviewed: { type: boolean }
         conversationId: { type: string, format: uuid, nullable: true }
@@ -1666,7 +1798,7 @@ components:
       type: object
       properties:
         id: { type: string, format: uuid }
-        type: { type: string, enum: [BOOKING_REQUESTED, BOOKING_CONFIRMED, BOOKING_DECLINED, BOOKING_CANCELLED, MESSAGE, REVIEW, SYSTEM] }
+        type: { type: string, enum: [BOOKING_REQUESTED, BOOKING_CONFIRMED, BOOKING_DECLINED, BOOKING_CANCELLED, MESSAGE, REVIEW, SYSTEM, QUOTATION_ISSUED, QUOTATION_ACCEPTED, QUOTATION_REJECTED, BOOKING_EXPIRED] }
         title: { type: string }
         body: { type: string }
         deepLink: { type: string, example: /bookings/7d1c }
@@ -1763,7 +1895,19 @@ components:
         greetingName: { type: string }
         today: { type: integer }
         awaitingReply: { type: integer }
-        monthEarnings: { $ref: '#/components/schemas/Money' }
+        awaitingCustomerApproval: { type: integer }
+        pendingHolds: { type: integer }
+        unreadConversations: { type: integer }
+        quotationsAwaitingApproval:
+          type: array
+          items: { $ref: '#/components/schemas/Booking' }
+        monthBookingValues:
+          type: array
+          items: { $ref: '#/components/schemas/Money' }
+        monthEarnings:
+          allOf:
+            - $ref: '#/components/schemas/Money'
+          description: Legacy INR completed booking value. No payment collection is implied. See monthBookingValues for all currencies.
         rating: { type: number }
         needsReply:
           type: array
@@ -1779,7 +1923,11 @@ components:
             nextStep: { type: string }
     Earnings:
       type: object
+      description: Completed booking value, not payment collection. Legacy total and daily fields are INR only; totals groups all currencies.
       properties:
+        totals:
+          type: array
+          items: { $ref: '#/components/schemas/Money' }
         month: { type: string }
         total: { $ref: '#/components/schemas/Money' }
         completedBookings: { type: integer }

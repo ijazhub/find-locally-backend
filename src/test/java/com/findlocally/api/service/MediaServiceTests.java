@@ -50,6 +50,7 @@ class MediaServiceTests {
 
     @Test
     void identityDocumentsUsePrivateKeys() {
+        when(repository.isBusiness(user)).thenReturn(true);
         var response = service.createUpload(UploadPurpose.ID_DOCUMENT, new MockMultipartFile("file", "id.pdf", "application/pdf", new byte[10]));
         verify(storage).upload(eq("private/" + user + "/" + response.getUploadId()), eq("application/pdf"), eq(10L), any(InputStream.class));
     }

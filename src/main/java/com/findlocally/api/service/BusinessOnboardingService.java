@@ -65,9 +65,8 @@ public class BusinessOnboardingService {
     @Transactional
     public OnboardingState startOnboarding() {
         UUID owner = currentUser.id();
-        if (!repository.userExists(owner)) throw error(HttpStatus.UNAUTHORIZED, "User account not found");
+        if (!repository.isBusinessAccount(owner)) throw error(HttpStatus.FORBIDDEN, "A BUSINESS account is required");
         if (!repository.create(owner)) throw error(HttpStatus.CONFLICT, "Business onboarding already exists");
-        repository.addBusinessRole(owner);
         return state(requireDraft(owner, false));
     }
 
@@ -163,7 +162,6 @@ public class BusinessOnboardingService {
         draft.state().setStatus(OnboardingState.StatusEnum.SUBMITTED);
         draft.state().setCurrentStep(OnboardingState.CurrentStepEnum.DONE);
         repository.saveProgress(draft.id(), draft.state());
-        repository.enqueueOnboarded(draft.id());
         return state(draft);
     }
 

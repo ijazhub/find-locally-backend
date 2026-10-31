@@ -10,7 +10,9 @@ RUN --mount=type=cache,target=/root/.m2 mvn -B -ntp -DskipTests package \
 
 FROM eclipse-temurin:21-jre-jammy
 WORKDIR /app
-RUN groupadd --system app && useradd --system --gid app app
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system app && useradd --system --gid app app
 COPY --from=build --chown=app:app /build/app.jar /app/app.jar
 USER app:app
 ENV SERVER_PORT=8080 \

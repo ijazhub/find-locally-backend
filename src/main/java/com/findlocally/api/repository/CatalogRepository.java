@@ -15,7 +15,8 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class CatalogRepository {
     private final DbHelper dbHelper;
-    public CatalogRepository(DbHelper dbHelper) { this.dbHelper = dbHelper; }
+    private final Clock clock;
+    public CatalogRepository(DbHelper dbHelper,Clock clock) { this.dbHelper = dbHelper; this.clock=clock; }
 
     public record Search(String category, String q, String city, Double lat, Double lng, BigDecimal maxDistance,
                          BigDecimal minRating, Long maxPrice, boolean verified, String sort, int page, int size, UUID viewer) {}
@@ -110,15 +111,15 @@ public class CatalogRepository {
     public Set<LocalDate> blocked(UUID provider, LocalDate start, LocalDate end) {
         return new HashSet<>(dbHelper.getRows("""
                 SELECT blocked_on FROM business_blocked_dates WHERE business_id = :provider AND blocked_on BETWEEN :start AND :end
-                """, new MapSqlParameterSource("provider", provider).addValue("start", start).addValue("end", end),
+                """, new MapSqlParameterSource("provider", provider).addValue("start", start).addValue("end", end).addValue("now",OffsetDateTime.now(clock)),
                 (rs, row) -> rs.getObject("blocked_on", LocalDate.class)));
     }
 
     public List<Busy> busy(UUID provider, OffsetDateTime start, OffsetDateTime end) {
         return dbHelper.getRows("""
                 SELECT starts_at, ends_at FROM bookings WHERE business_id = :provider
-                  AND status IN ('AWAITING_CONFIRMATION', 'CONFIRMED') AND starts_at < :end AND ends_at > :start
-                """, new MapSqlParameterSource("provider", provider).addValue("start", start).addValue("end", end),
+                  AND status IN ('AWAITING_CONFIRMATION', 'AWAITING_CUSTOMER_APPROVAL', 'CONFIRMED') AND (status='CONFIRMED' OR response_deadline > :now) AND starts_at < :end AND ends_at > :start
+                """, new MapSqlParameterSource("provider", provider).addValue("start", start).addValue("end", end).addValue("now",OffsetDateTime.now(clock)),
                 (rs, row) -> new Busy(rs.getObject("starts_at", OffsetDateTime.class).toInstant(),
                         rs.getObject("ends_at", OffsetDateTime.class).toInstant()));
     }

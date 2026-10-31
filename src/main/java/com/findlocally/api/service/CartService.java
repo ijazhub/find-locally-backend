@@ -54,6 +54,7 @@ public class CartService {
     @Transactional public List<Booking> checkoutCart(UUID key) {
         if (key == null) throw Inputs.bad("Idempotency-Key is required");
         UUID user = lock();
+        if (!bookings.isCustomerAccount(user)) throw new ResponseStatusException(HttpStatus.FORBIDDEN,"A CUSTOMER account is required for checkout");
         String path = "/api/v1/cart/checkout", hash = tokens.hash("cart-checkout:v1");
         var record = bookings.claimKey(user, key, path, hash);
         if (!path.equals(record.path()) || !hash.equals(record.requestHash())) throw Inputs.conflict("Idempotency key was used for a different request");

@@ -43,19 +43,19 @@ class BusinessOnboardingServiceTests {
     static void closeValidators() { VALIDATORS.close(); }
 
     @Test
-    void startAddsBusinessRoleAndReturnsDraft() {
-        when(repository.userExists(owner)).thenReturn(true);
+    void startUsesExistingBusinessAccountAndReturnsDraft() {
+        when(repository.isBusinessAccount(owner)).thenReturn(true);
         when(repository.create(owner)).thenReturn(true);
         assertSame(state, service.startOnboarding());
-        verify(repository).addBusinessRole(owner);
+        verify(repository).create(owner);
     }
 
     @Test
     void duplicateStartDoesNotChangeRolesOrDraft() {
-        when(repository.userExists(owner)).thenReturn(true);
+        when(repository.isBusinessAccount(owner)).thenReturn(true);
         assertEquals(HttpStatus.CONFLICT,
                 assertThrows(ResponseStatusException.class, service::startOnboarding).getStatusCode());
-        verify(repository, never()).addBusinessRole(any());
+        verify(repository, never()).find(any(),anyBoolean());
     }
 
     @Test
@@ -125,7 +125,6 @@ class BusinessOnboardingServiceTests {
         assertEquals(HttpStatus.BAD_REQUEST,
                 assertThrows(ResponseStatusException.class, service::submitOnboarding).getStatusCode());
         verify(repository, never()).publish(any());
-        verify(repository, never()).enqueueOnboarded(any());
     }
 
     @Test
@@ -138,7 +137,7 @@ class BusinessOnboardingServiceTests {
         var order = inOrder(repository);
         order.verify(repository).publish(business);
         order.verify(repository).saveProgress(business, state);
-        order.verify(repository).enqueueOnboarded(business);
+        order.verifyNoMoreInteractions();
     }
 
     @Test
